@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wasmdb
+  labels:
+    app: wasmdb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wasmdb
+  template:
+    metadata:
+      labels:
+        app: wasmdb
+    spec:
+      containers:
+        - name: wasmdb
+          image: wasmdb:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: wasmdb-config
+            - secretRef:
+                name: wasmdb-secrets
+                optional: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: cache
+              mountPath: /tmp/wasmdb-cache
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: cache
+          emptyDir:
+            sizeLimit: 10Gi

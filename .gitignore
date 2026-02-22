@@ -1,0 +1,6 @@
+# Test artifacts
+internal/api/checkpoints/
+internal/api/bleve/
+
+# Binary
+/wasmdb

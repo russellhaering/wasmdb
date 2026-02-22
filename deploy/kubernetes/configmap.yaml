@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wasmdb-config
+  labels:
+    app: wasmdb
+data:
+  WASMDB_LISTEN_ADDR: ":8080"
+  WASMDB_S3_REGION: "us-east-1"
+  WASMDB_S3_PREFIX: "wasmdb"
+  WASMDB_CACHE_DIR: "/tmp/wasmdb-cache"
+  WASMDB_CACHE_MAX_SIZE: "1073741824"
+  WASMDB_MEMTABLE_MAX_SIZE: "67108864"
+  WASMDB_L0_COMPACT_THRESHOLD: "4"
+  WASMDB_WAL_FLUSH_INTERVAL: "1s"
