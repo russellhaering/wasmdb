@@ -22,10 +22,14 @@ func setupTestServer(t *testing.T) *Server {
 	})
 	t.Cleanup(func() { registry.Close() })
 
-	return NewServer(ServerConfig{
+	srv, err := NewServer(context.Background(), ServerConfig{
 		ListenAddr: ":0",
 		Registry:   registry,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv
 }
 
 func TestCreateAndGetDatabase(t *testing.T) {

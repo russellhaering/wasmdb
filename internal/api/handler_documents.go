@@ -41,6 +41,34 @@ func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, doc)
 }
 
+func (s *Server) handleBulkCreateDocuments(w http.ResponseWriter, r *http.Request) {
+	dbName := r.PathValue("db")
+
+	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	if err != nil {
+		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		return
+	}
+
+	var docs []*document.Document
+	if err := decodeJSON(r, &docs); err != nil {
+		writeErrorMsg(w, 400, "bad_request", "invalid JSON: "+err.Error())
+		return
+	}
+
+	if len(docs) == 0 {
+		writeJSON(w, 200, map[string]any{"count": 0})
+		return
+	}
+
+	if err := db.PutDocumentsBulk(r.Context(), docs); err != nil {
+		writeErrorMsg(w, 400, "bad_request", err.Error())
+		return
+	}
+
+	writeJSON(w, 201, map[string]any{"count": len(docs)})
+}
+
 func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 	dbName := r.PathValue("db")
 	docID := r.PathValue("id")

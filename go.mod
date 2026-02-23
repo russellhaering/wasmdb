@@ -51,6 +51,7 @@ require (
 	github.com/chewxy/math32 v1.10.1 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/renameio v1.0.1 // indirect
+	github.com/graphql-go/graphql v0.8.1 // indirect
 	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/viterin/partial v1.1.0 // indirect

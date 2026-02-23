@@ -97,22 +97,27 @@ func (d *Database) PutDocument(ctx context.Context, doc *document.Document) erro
 
 	now := time.Now().UTC()
 
-	// Generate ID if not set.
-	if doc.ID == "" {
+	// Generate ID if not set. Generated IDs are unique (ULID),
+	// so we can skip the existence check.
+	isNew := doc.ID == ""
+	if isNew {
 		doc.ID = ulid.Make().String()
 	}
 
-	// Check if this is an update (existing doc).
-	existing, ok, err := d.db.Get(ctx, doc.ID)
-	if err != nil {
-		return fmt.Errorf("check existing: %w", err)
-	}
+	// Check if this is an update (existing doc). Skip for new docs
+	// with generated IDs since they can't already exist.
+	if !isNew {
+		existing, ok, err := d.db.Get(ctx, doc.ID)
+		if err != nil {
+			return fmt.Errorf("check existing: %w", err)
+		}
 
-	if ok && existing.Value != nil {
-		existingDoc, err := document.Deserialize(existing.Value)
-		if err == nil {
-			doc.CreatedAt = existingDoc.CreatedAt
-			doc.Version = existingDoc.Version + 1
+		if ok && existing.Value != nil {
+			existingDoc, err := document.Deserialize(existing.Value)
+			if err == nil {
+				doc.CreatedAt = existingDoc.CreatedAt
+				doc.Version = existingDoc.Version + 1
+			}
 		}
 	}
 
@@ -148,6 +153,51 @@ func (d *Database) PutDocument(ctx context.Context, doc *document.Document) erro
 	}
 
 	// Flush for strong read-after-write consistency.
+	if err := d.db.Flush(ctx); err != nil {
+		return fmt.Errorf("flush: %w", err)
+	}
+
+	return nil
+}
+
+// PutDocumentsBulk validates, serializes, and stores multiple documents with a single flush.
+func (d *Database) PutDocumentsBulk(ctx context.Context, docs []*document.Document) error {
+	now := time.Now().UTC()
+
+	for _, doc := range docs {
+		// Validate schema.
+		if d.Schema != nil && len(doc.Attributes) > 0 {
+			if err := d.Schema.Validate(doc.Attributes); err != nil {
+				return fmt.Errorf("validation (doc %s): %w", doc.ID, err)
+			}
+		}
+
+		// Generate ID if not set.
+		if doc.ID == "" {
+			doc.ID = ulid.Make().String()
+		}
+
+		if doc.CreatedAt.IsZero() {
+			doc.CreatedAt = now
+		}
+		doc.UpdatedAt = now
+		if doc.Version == 0 {
+			doc.Version = 1
+		}
+
+		// Serialize.
+		data, err := document.Serialize(doc)
+		if err != nil {
+			return fmt.Errorf("serialize (doc %s): %w", doc.ID, err)
+		}
+
+		// Write to LSM (MemTable only, no flush yet).
+		if _, err := d.db.Put(ctx, doc.ID, data); err != nil {
+			return fmt.Errorf("put (doc %s): %w", doc.ID, err)
+		}
+	}
+
+	// Single flush for the entire batch.
 	if err := d.db.Flush(ctx); err != nil {
 		return fmt.Errorf("flush: %w", err)
 	}

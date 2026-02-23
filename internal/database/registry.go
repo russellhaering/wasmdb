@@ -34,6 +34,9 @@ type Registry struct {
 	// LSM config defaults
 	memTableMaxSize int64
 	l0CompactThresh int
+
+	// OnSchemaChange is called after databases are created, deleted, or schemas are updated.
+	OnSchemaChange func(ctx context.Context)
 }
 
 // RegistryConfig configures the registry.
@@ -104,6 +107,11 @@ func (r *Registry) CreateDatabase(ctx context.Context, name string, schema *docu
 
 	r.databases[name] = db
 	slog.Info("database created", "name", name)
+
+	if r.OnSchemaChange != nil {
+		r.OnSchemaChange(ctx)
+	}
+
 	return db, nil
 }
 
@@ -144,7 +152,7 @@ func (r *Registry) GetDatabase(ctx context.Context, name string) (*Database, err
 	return db, nil
 }
 
-// DeleteDatabase deletes a database and its metadata.
+// DeleteDatabase deletes a database, its metadata, and all stored data.
 func (r *Registry) DeleteDatabase(ctx context.Context, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -154,11 +162,24 @@ func (r *Registry) DeleteDatabase(ctx context.Context, name string) error {
 		delete(r.databases, name)
 	}
 
-	if err := r.store.Delete(ctx, r.metaPath(name)); err != nil {
-		return fmt.Errorf("delete metadata: %w", err)
+	// Delete all objects under the database prefix (LSM data, manifests, WAL).
+	dbPrefix := fmt.Sprintf("%s/databases/%s/", r.prefix, name)
+	keys, err := r.store.List(ctx, dbPrefix)
+	if err != nil {
+		return fmt.Errorf("list database objects: %w", err)
+	}
+	for _, key := range keys {
+		if err := r.store.Delete(ctx, key); err != nil {
+			slog.Warn("failed to delete object during database cleanup", "key", key, "err", err)
+		}
 	}
 
-	slog.Info("database deleted", "name", name)
+	slog.Info("database deleted", "name", name, "objects_removed", len(keys))
+
+	if r.OnSchemaChange != nil {
+		r.OnSchemaChange(ctx)
+	}
+
 	return nil
 }
 
@@ -207,7 +228,15 @@ func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *docume
 	if err != nil {
 		return err
 	}
-	return r.store.Put(ctx, r.metaPath(name), data, false)
+	if err := r.store.Put(ctx, r.metaPath(name), data, false); err != nil {
+		return err
+	}
+
+	if r.OnSchemaChange != nil {
+		r.OnSchemaChange(ctx)
+	}
+
+	return nil
 }
 
 func (r *Registry) openDatabase(ctx context.Context, name string, schema *document.Schema) (*Database, error) {

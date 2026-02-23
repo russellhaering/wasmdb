@@ -16,6 +16,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Documents.
 	mux.HandleFunc("POST /v1/databases/{db}/documents", s.handleCreateDocument)
+	mux.HandleFunc("POST /v1/databases/{db}/documents/_bulk", s.handleBulkCreateDocuments)
 	mux.HandleFunc("GET /v1/databases/{db}/documents/{id}", s.handleGetDocument)
 	mux.HandleFunc("PUT /v1/databases/{db}/documents/{id}", s.handleUpdateDocument)
 	mux.HandleFunc("DELETE /v1/databases/{db}/documents/{id}", s.handleDeleteDocument)
@@ -24,6 +25,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/databases/{db}/search/vector", s.handleVectorSearch)
 	mux.HandleFunc("POST /v1/databases/{db}/search/text", s.handleTextSearch)
 	mux.HandleFunc("POST /v1/databases/{db}/search/attributes", s.handleAttributeSearch)
+
+	// GraphQL.
+	mux.Handle("POST /v1/graphql", s.graphql)
 
 	// Health.
 	mux.HandleFunc("GET /healthz", s.handleHealthz)

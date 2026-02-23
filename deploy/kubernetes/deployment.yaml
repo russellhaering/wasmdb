@@ -17,6 +17,7 @@ spec:
       containers:
         - name: wasmdb
           image: wasmdb:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 8080
               name: http

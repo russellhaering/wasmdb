@@ -41,6 +41,12 @@ func NewS3Store(ctx context.Context, cfg S3Config) (*S3Store, error) {
 	}
 
 	var s3Opts []func(*s3.Options)
+	s3Opts = append(s3Opts, func(o *s3.Options) {
+		// Disable response checksum validation — not all S3-compatible
+		// stores (e.g. Tigris) support the same checksum algorithms,
+		// and the SDK wastes time warning/retrying.
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+	})
 	if cfg.Endpoint != "" {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)

@@ -63,10 +63,14 @@ func main() {
 	defer registry.Close()
 
 	// Start API server.
-	srv := api.NewServer(api.ServerConfig{
+	srv, err := api.NewServer(ctx, api.ServerConfig{
 		ListenAddr: cfg.ListenAddr,
 		Registry:   registry,
 	})
+	if err != nil {
+		slog.Error("failed to create server", "err", err)
+		os.Exit(1)
+	}
 
 	// Graceful shutdown.
 	go func() {

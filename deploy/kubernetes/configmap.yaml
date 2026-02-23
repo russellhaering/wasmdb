@@ -6,7 +6,8 @@ metadata:
     app: wasmdb
 data:
   WASMDB_LISTEN_ADDR: ":8080"
-  WASMDB_S3_REGION: "us-east-1"
+  WASMDB_S3_BUCKET: "wasmdb-russellhaering"
+  WASMDB_S3_REGION: "us-west-2"
   WASMDB_S3_PREFIX: "wasmdb"
   WASMDB_CACHE_DIR: "/tmp/wasmdb-cache"
   WASMDB_CACHE_MAX_SIZE: "1073741824"

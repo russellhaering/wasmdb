@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/russellhaering/wasmdb/internal/api/graphqlapi"
 	"github.com/russellhaering/wasmdb/internal/database"
 )
 
@@ -14,6 +15,7 @@ import (
 type Server struct {
 	httpServer *http.Server
 	registry   *database.Registry
+	graphql    *graphqlapi.Handler
 }
 
 // ServerConfig configures the API server.
@@ -23,9 +25,22 @@ type ServerConfig struct {
 }
 
 // NewServer creates a new API server.
-func NewServer(cfg ServerConfig) *Server {
+func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	s := &Server{
 		registry: cfg.Registry,
+	}
+
+	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)
+	if err != nil {
+		return nil, fmt.Errorf("init graphql: %w", err)
+	}
+	s.graphql = gqlHandler
+
+	// Rebuild the GraphQL schema when databases change.
+	cfg.Registry.OnSchemaChange = func(ctx context.Context) {
+		if err := gqlHandler.RebuildSchema(ctx); err != nil {
+			slog.Error("failed to rebuild graphql schema", "err", err)
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -41,7 +56,7 @@ func NewServer(cfg ServerConfig) *Server {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	return s
+	return s, nil
 }
 
 // Start begins listening for requests.
