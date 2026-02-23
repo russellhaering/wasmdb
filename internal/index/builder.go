@@ -67,6 +67,17 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 func (b *Builder) run() {
 	defer b.wg.Done()
 
+	// Validate checkpoint against actual data. If the checkpoint's seqnum
+	// exceeds the max seqnum in the store (e.g., after a restart with a fresh
+	// in-memory store), reset and do a full rebuild.
+	if b.lastSeqNum > 0 {
+		if maxSeq := b.maxSeqInStore(); maxSeq < b.lastSeqNum {
+			slog.Info("index: stale checkpoint, triggering rebuild",
+				"checkpoint_seq", b.lastSeqNum, "store_max_seq", maxSeq, "db", b.dbName)
+			b.lastSeqNum = 0
+		}
+	}
+
 	// Initial full rebuild if no checkpoint.
 	if b.lastSeqNum == 0 {
 		if err := b.fullRebuild(); err != nil {
@@ -87,6 +98,20 @@ func (b *Builder) run() {
 			}
 		}
 	}
+}
+
+func (b *Builder) maxSeqInStore() uint64 {
+	entries, err := b.db.Scan(context.Background())
+	if err != nil {
+		return 0
+	}
+	var maxSeq uint64
+	for _, e := range entries {
+		if e.SeqNum > maxSeq {
+			maxSeq = e.SeqNum
+		}
+	}
+	return maxSeq
 }
 
 func (b *Builder) fullRebuild() error {

@@ -161,6 +161,15 @@ func (w *Writer) flushLocked(ctx context.Context) error {
 		return fmt.Errorf("writer: flush wal: %w", err)
 	}
 
+	// Reload the latest manifest to pick up any compactor changes.
+	latest, err := w.manifest.LoadLatest(ctx)
+	if err != nil {
+		return fmt.Errorf("writer: reload manifest: %w", err)
+	}
+	if latest != nil {
+		w.currentManifest = latest
+	}
+
 	// Update manifest with new L0 SSTable.
 	newManifest := &Manifest{
 		Version:        w.currentManifest.Version + 1,
