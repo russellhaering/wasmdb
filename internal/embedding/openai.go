@@ -3,10 +3,12 @@ package embedding
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"time"
 )
@@ -47,7 +49,18 @@ func NewOpenAIEmbedder(cfg OpenAIConfig) *OpenAIEmbedder {
 		model:      model,
 		dimensions: dims,
 		endpoint:   endpoint,
-		client:     &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				// Force HTTP/1.1 to avoid http2 "response body closed" errors.
+				TLSNextProto: make(map[string]func(string, *tls.Conn) http.RoundTripper),
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout: 10 * time.Second,
+			},
+		},
 	}
 }
 

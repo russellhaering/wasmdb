@@ -1,0 +1,36 @@
+app = 'wasmdb'
+primary_region = 'sjc'
+
+[build]
+  dockerfile = 'deploy/Dockerfile'
+
+[env]
+  WASMDB_LISTEN_ADDR = ':8080'
+  WASMDB_S3_BUCKET = 'wasmdb-data'
+  WASMDB_S3_REGION = 'auto'
+  WASMDB_S3_ENDPOINT = 'https://fly.storage.tigris.dev'
+  WASMDB_S3_PREFIX = 'wasmdb'
+  WASMDB_CACHE_DIR = '/tmp/wasmdb-cache'
+  WASMDB_CACHE_MAX_SIZE = '1073741824'
+  WASMDB_MEMTABLE_MAX_SIZE = '67108864'
+  WASMDB_L0_COMPACT_THRESHOLD = '4'
+  WASMDB_WAL_FLUSH_INTERVAL = '1s'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  grace_period = '10s'
+  interval = '10s'
+  method = 'GET'
+  path = '/healthz'
+  timeout = '5s'
+
+[[vm]]
+  memory = '2gb'
+  cpu_kind = 'shared'
+  cpus = 2

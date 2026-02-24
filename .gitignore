@@ -2,5 +2,6 @@
 internal/api/checkpoints/
 internal/api/bleve/
 
-# Binary
+# Binaries
 /wasmdb
+/bench
