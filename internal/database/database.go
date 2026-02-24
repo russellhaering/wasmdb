@@ -356,7 +356,7 @@ func (d *Database) SearchAttributes(ctx context.Context, filters []index.Filter,
 
 	// Apply pagination.
 	if offset >= len(ids) {
-		return nil, nil
+		return []*document.Document{}, nil
 	}
 	end := offset + limit
 	if end > len(ids) {

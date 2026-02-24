@@ -185,21 +185,25 @@ func (idx *AttributeIndex) Search(filters []Filter) []string {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	if len(filters) == 0 {
-		return nil
-	}
-
 	var result map[string]struct{}
 
-	for _, f := range filters {
-		matches := idx.applyFilter(f)
-		if result == nil {
-			result = matches
-		} else {
-			// Intersect.
-			for id := range result {
-				if _, ok := matches[id]; !ok {
-					delete(result, id)
+	if len(filters) == 0 {
+		// No filters: return all indexed document IDs.
+		result = make(map[string]struct{}, len(idx.docFields))
+		for id := range idx.docFields {
+			result[id] = struct{}{}
+		}
+	} else {
+		for _, f := range filters {
+			matches := idx.applyFilter(f)
+			if result == nil {
+				result = matches
+			} else {
+				// Intersect.
+				for id := range result {
+					if _, ok := matches[id]; !ok {
+						delete(result, id)
+					}
 				}
 			}
 		}
