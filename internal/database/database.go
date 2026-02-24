@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -13,6 +14,12 @@ import (
 	"github.com/russellhaering/wasmdb/internal/index"
 	"github.com/russellhaering/wasmdb/internal/storage/lsm"
 )
+
+// indexOp represents an async index operation.
+type indexOp struct {
+	doc    *document.Document // nil for deletes
+	delete string            // non-empty for deletes
+}
 
 // Database ties together storage, indexes, and embeddings for a single database.
 type Database struct {
@@ -26,6 +33,9 @@ type Database struct {
 	builder *index.Builder
 
 	embedder *embedding.Pipeline
+
+	indexCh chan indexOp
+	indexWg sync.WaitGroup
 }
 
 // DatabaseConfig configures a database instance.
@@ -70,9 +80,14 @@ func NewDatabase(cfg DatabaseConfig) (*Database, error) {
 		vector:   vectorIdx,
 		attrs:    attrs,
 		embedder: cfg.Embedder,
+		indexCh:  make(chan indexOp, 1024),
 	}
 
-	// Start index builder.
+	// Start async index worker.
+	d.indexWg.Add(1)
+	go d.indexWorker()
+
+	// Start index builder (handles initial rebuild from existing data on startup).
 	d.builder = index.NewBuilder(index.BuilderConfig{
 		DB:       cfg.DB,
 		Schema:   cfg.Schema,
@@ -157,6 +172,9 @@ func (d *Database) PutDocument(ctx context.Context, doc *document.Document) erro
 		return fmt.Errorf("flush: %w", err)
 	}
 
+	// Index inline — no need to wait for background builder.
+	d.indexDocument(doc)
+
 	return nil
 }
 
@@ -202,6 +220,11 @@ func (d *Database) PutDocumentsBulk(ctx context.Context, docs []*document.Docume
 		return fmt.Errorf("flush: %w", err)
 	}
 
+	// Index inline.
+	for _, doc := range docs {
+		d.indexDocument(doc)
+	}
+
 	return nil
 }
 
@@ -234,7 +257,49 @@ func (d *Database) DeleteDocument(ctx context.Context, id string) error {
 	if err := d.db.Flush(ctx); err != nil {
 		return fmt.Errorf("flush: %w", err)
 	}
+	d.deindexDocument(id)
 	return nil
+}
+
+// indexDocument enqueues a document for async indexing.
+func (d *Database) indexDocument(doc *document.Document) {
+	d.indexCh <- indexOp{doc: doc}
+}
+
+// deindexDocument enqueues a document removal for async indexing.
+func (d *Database) deindexDocument(id string) {
+	d.indexCh <- indexOp{delete: id}
+}
+
+// indexWorker drains the index channel and applies operations.
+func (d *Database) indexWorker() {
+	defer d.indexWg.Done()
+	for op := range d.indexCh {
+		if op.delete != "" {
+			if d.bleve != nil {
+				d.bleve.DeleteDocument(op.delete)
+			}
+			if d.vector != nil {
+				d.vector.Delete(op.delete)
+			}
+			d.attrs.DeleteDocument(op.delete)
+			continue
+		}
+		doc := op.doc
+		if d.bleve != nil {
+			if err := d.bleve.IndexDocument(doc); err != nil {
+				slog.Warn("async bleve index failed", "doc", doc.ID, "err", err)
+			}
+		}
+		if d.vector != nil && len(doc.Embedding) > 0 {
+			if err := d.vector.Add(doc.ID, doc.Embedding); err != nil {
+				slog.Warn("async vector index failed", "doc", doc.ID, "err", err)
+			}
+		}
+		if len(doc.Attributes) > 0 {
+			d.attrs.IndexDocument(doc.ID, doc.Attributes)
+		}
+	}
 }
 
 // SearchVector performs a vector similarity search.
@@ -342,6 +407,9 @@ func (d *Database) Close() error {
 	if d.builder != nil {
 		d.builder.Close()
 	}
+	// Drain pending index ops before closing indexes.
+	close(d.indexCh)
+	d.indexWg.Wait()
 	if d.bleve != nil {
 		d.bleve.Close()
 	}

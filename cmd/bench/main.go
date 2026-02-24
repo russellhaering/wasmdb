@@ -465,12 +465,16 @@ func bench5TextSearch() {
 
 		for range iterations {
 			t := time.Now()
-			resp := mustDoJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/search/text", textSearchRequest{
+			resp, err := doJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/search/text", textSearchRequest{
 				Query:  q,
 				Limit:  10,
 				Offset: 0,
 			})
 			elapsed := time.Since(t)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Search error: %v\n", err)
+				continue
+			}
 			body := readBody(resp)
 
 			if resp.StatusCode == 200 {
