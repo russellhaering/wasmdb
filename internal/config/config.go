@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,9 @@ type Config struct {
 
 	// Embedding
 	OpenAIAPIKey string
+
+	// Auth
+	APITokens []string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -43,7 +47,22 @@ func Load() *Config {
 		L0CompactThresh:  int(envOrDefaultInt64("WASMDB_L0_COMPACT_THRESHOLD", 4)),
 		WALFlushInterval: envOrDefaultDuration("WASMDB_WAL_FLUSH_INTERVAL", 1*time.Second),
 		OpenAIAPIKey:     envOrDefault("OPENAI_API_KEY", ""),
+		APITokens:        parseTokens(os.Getenv("WASMDB_API_TOKENS")),
 	}
+}
+
+func parseTokens(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var tokens []string
+	for _, t := range strings.Split(s, ",") {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			tokens = append(tokens, t)
+		}
+	}
+	return tokens
 }
 
 func envOrDefault(key, def string) string {

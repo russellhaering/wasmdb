@@ -66,6 +66,7 @@ func main() {
 	srv, err := api.NewServer(ctx, api.ServerConfig{
 		ListenAddr: cfg.ListenAddr,
 		Registry:   registry,
+		APITokens:  cfg.APITokens,
 	})
 	if err != nil {
 		slog.Error("failed to create server", "err", err)

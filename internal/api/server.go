@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/russellhaering/wasmdb/internal/api/graphqlapi"
@@ -16,18 +18,26 @@ type Server struct {
 	httpServer *http.Server
 	registry   *database.Registry
 	graphql    *graphqlapi.Handler
+	apiTokens  map[string]struct{}
 }
 
 // ServerConfig configures the API server.
 type ServerConfig struct {
 	ListenAddr string
 	Registry   *database.Registry
+	APITokens  []string
 }
 
 // NewServer creates a new API server.
 func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
+	tokens := make(map[string]struct{}, len(cfg.APITokens))
+	for _, t := range cfg.APITokens {
+		tokens[t] = struct{}{}
+	}
+
 	s := &Server{
-		registry: cfg.Registry,
+		registry:  cfg.Registry,
+		apiTokens: tokens,
 	}
 
 	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)
@@ -70,7 +80,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// middleware chains request ID, logging, and panic recovery middleware.
+// checkAuth validates the bearer token in the Authorization header against the
+// configured set of API tokens. Returns true if the token is valid.
+func (s *Server) checkAuth(r *http.Request) bool {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return false
+	}
+	token := header[len("Bearer "):]
+	for allowed := range s.apiTokens {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(allowed)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// middleware chains request ID, auth, logging, and panic recovery middleware.
 func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -94,6 +120,14 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				writeError(w, ErrInternalServer)
 			}
 		}()
+
+		// Auth — skip for health check endpoints.
+		if r.URL.Path != "/healthz" && r.URL.Path != "/readyz" {
+			if !s.checkAuth(r) {
+				writeError(w, ErrUnauthorized)
+				return
+			}
+		}
 
 		// Wrap response writer to capture status.
 		wrapped := &statusWriter{ResponseWriter: w, status: 200}

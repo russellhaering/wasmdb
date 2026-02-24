@@ -17,6 +17,7 @@ func (e *APIError) Error() string {
 }
 
 var (
+	ErrUnauthorized   = &APIError{Status: 401, Code: "unauthorized", Message: "missing or invalid bearer token"}
 	ErrNotFound       = &APIError{Status: 404, Code: "not_found", Message: "resource not found"}
 	ErrBadRequest     = &APIError{Status: 400, Code: "bad_request", Message: "invalid request"}
 	ErrConflict       = &APIError{Status: 409, Code: "conflict", Message: "resource already exists"}
