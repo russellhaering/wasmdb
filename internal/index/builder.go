@@ -241,3 +241,10 @@ func (b *Builder) LastSeqNum() uint64 {
 	defer b.mu.Unlock()
 	return b.lastSeqNum
 }
+
+// DeleteCheckpoint removes the checkpoint file for a database, forcing a full rebuild
+// on the next Builder start.
+func DeleteCheckpoint(cacheDir, dbName string) {
+	path := filepath.Join(cacheDir, "checkpoints", dbName+".json")
+	os.Remove(path)
+}

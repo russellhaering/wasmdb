@@ -100,6 +100,83 @@ type Schema struct {
 	EmbeddingDimensions int               `json:"embedding_dimensions,omitempty"`
 }
 
+// SchemaChange describes what changed between two schemas.
+type SchemaChange struct {
+	EmbeddingChanged      bool // model or dimensions differ (includes add/remove)
+	IndexedFieldsChanged  bool // any indexed flag added/removed
+	FullTextFieldsChanged bool // any full_text flag added/removed
+}
+
+// Changed returns true if any aspect of the schema changed that requires re-indexing.
+func (sc SchemaChange) Changed() bool {
+	return sc.EmbeddingChanged || sc.IndexedFieldsChanged || sc.FullTextFieldsChanged
+}
+
+// DiffSchemas compares two schemas and returns what changed.
+func DiffSchemas(old, new *Schema) SchemaChange {
+	var sc SchemaChange
+
+	oldModel, oldDims := "", 0
+	newModel, newDims := "", 0
+	if old != nil {
+		oldModel = old.EmbeddingModel
+		oldDims = old.EmbeddingDimensions
+	}
+	if new != nil {
+		newModel = new.EmbeddingModel
+		newDims = new.EmbeddingDimensions
+	}
+	sc.EmbeddingChanged = oldModel != newModel || oldDims != newDims
+
+	oldIndexed := indexedFieldSet(old)
+	newIndexed := indexedFieldSet(new)
+	sc.IndexedFieldsChanged = !equalStringSet(oldIndexed, newIndexed)
+
+	oldFT := fullTextFieldSet(old)
+	newFT := fullTextFieldSet(new)
+	sc.FullTextFieldsChanged = !equalStringSet(oldFT, newFT)
+
+	return sc
+}
+
+func indexedFieldSet(s *Schema) map[string]struct{} {
+	m := make(map[string]struct{})
+	if s == nil {
+		return m
+	}
+	for _, f := range s.Fields {
+		if f.Indexed {
+			m[f.Name] = struct{}{}
+		}
+	}
+	return m
+}
+
+func fullTextFieldSet(s *Schema) map[string]struct{} {
+	m := make(map[string]struct{})
+	if s == nil {
+		return m
+	}
+	for _, f := range s.Fields {
+		if f.FullText {
+			m[f.Name] = struct{}{}
+		}
+	}
+	return m
+}
+
+func equalStringSet(a, b map[string]struct{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if _, ok := b[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // Validate checks that the given attributes conform to this schema.
 func (s *Schema) Validate(attrs map[string]any) error {
 	fieldDefs := make(map[string]FieldDefinition, len(s.Fields))

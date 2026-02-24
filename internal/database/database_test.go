@@ -266,11 +266,18 @@ func TestSearchAttributesEmptyReturnsAll(t *testing.T) {
 		}
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	results, err := db.SearchAttributes(ctx, []index.Filter{}, 100, 0)
-	if err != nil {
-		t.Fatalf("SearchAttributes: %v", err)
+	var results []*document.Document
+	for attempt := range 20 {
+		time.Sleep(100 * time.Millisecond)
+		var err error
+		results, err = db.SearchAttributes(ctx, []index.Filter{}, 100, 0)
+		if err != nil {
+			t.Fatalf("SearchAttributes: %v", err)
+		}
+		if len(results) == 5 {
+			break
+		}
+		_ = attempt
 	}
 	if len(results) != 5 {
 		t.Fatalf("expected 5 docs with empty filter, got %d", len(results))

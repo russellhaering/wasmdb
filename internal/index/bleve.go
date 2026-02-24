@@ -120,6 +120,11 @@ func (b *BleveIndex) Search(queryStr string, limit, offset int) ([]FTSResult, in
 	return results, int(result.Total), nil
 }
 
+// Path returns the filesystem path of the Bleve index directory.
+func (b *BleveIndex) Path() string {
+	return b.path
+}
+
 // Close closes the Bleve index.
 func (b *BleveIndex) Close() error {
 	return b.index.Close()

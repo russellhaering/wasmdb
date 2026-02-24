@@ -210,14 +210,17 @@ func (r *Registry) ListDatabases(ctx context.Context) ([]DatabaseMeta, error) {
 	return metas, nil
 }
 
-// UpdateSchema updates a database's schema.
+// UpdateSchema updates a database's schema, rebuilding affected indexes.
 func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *document.Schema) error {
 	db, err := r.GetDatabase(ctx, name)
 	if err != nil {
 		return err
 	}
 
-	db.UpdateSchema(schema)
+	oldSchema := db.Schema
+	if err := db.RebuildIndexes(ctx, oldSchema, schema); err != nil {
+		return fmt.Errorf("rebuild indexes: %w", err)
+	}
 
 	// Update persisted metadata.
 	meta := DatabaseMeta{

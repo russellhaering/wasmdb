@@ -100,6 +100,66 @@ func TestTombstone(t *testing.T) {
 	}
 }
 
+func TestSerializeRoundTripWithEmbeddingModel(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Nanosecond)
+	doc := &Document{
+		ID:             "doc-456",
+		Content:        "Hello",
+		Embedding:      []float32{0.1, 0.2},
+		EmbeddingModel: "text-embedding-3-small",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Version:        1,
+	}
+
+	data, err := Serialize(doc)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+
+	got, err := Deserialize(data)
+	if err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+
+	if got.EmbeddingModel != doc.EmbeddingModel {
+		t.Errorf("EmbeddingModel: got %q, want %q", got.EmbeddingModel, doc.EmbeddingModel)
+	}
+	if got.Content != doc.Content {
+		t.Errorf("Content: got %q, want %q", got.Content, doc.Content)
+	}
+	if len(got.Embedding) != len(doc.Embedding) {
+		t.Fatalf("Embedding len: got %d, want %d", len(got.Embedding), len(doc.Embedding))
+	}
+}
+
+func TestSerializeBackwardCompat(t *testing.T) {
+	// Serialize a document without EmbeddingModel (simulates old format).
+	now := time.Now().UTC().Truncate(time.Nanosecond)
+	doc := &Document{
+		Content:   "Old doc",
+		Embedding: []float32{0.5, 0.6},
+		CreatedAt: now,
+		UpdatedAt: now,
+		Version:   1,
+	}
+
+	data, err := Serialize(doc)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+
+	got, err := Deserialize(data)
+	if err != nil {
+		t.Fatalf("Deserialize: %v", err)
+	}
+
+	// Old docs without EmbeddingModel should deserialize with empty string.
+	if got.EmbeddingModel != "" {
+		t.Errorf("EmbeddingModel: got %q, want empty", got.EmbeddingModel)
+	}
+}
+
 func TestSerializeEmpty(t *testing.T) {
 	if IsTombstone(nil) {
 		t.Error("nil should not be tombstone")

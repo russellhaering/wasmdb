@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,16 +28,22 @@ type Database struct {
 	Name   string
 	Schema *document.Schema
 
-	db      *lsm.DB
+	db       *lsm.DB
+	cacheDir string
+
+	// mu protects bleve, vector, attrs, and indexCh during index rebuilds.
+	mu      sync.RWMutex
 	bleve   *index.BleveIndex
 	vector  *index.VectorIndex
 	attrs   *index.AttributeIndex
 	builder *index.Builder
+	indexCh chan indexOp
+	indexWg sync.WaitGroup
 
 	embedder *embedding.Pipeline
 
-	indexCh chan indexOp
-	indexWg sync.WaitGroup
+	reembedCancel context.CancelFunc
+	reembedWg     sync.WaitGroup
 }
 
 // DatabaseConfig configures a database instance.
@@ -76,6 +84,7 @@ func NewDatabase(cfg DatabaseConfig) (*Database, error) {
 		Name:     cfg.Name,
 		Schema:   cfg.Schema,
 		db:       cfg.DB,
+		cacheDir: cfg.CacheDir,
 		bleve:    bleveIdx,
 		vector:   vectorIdx,
 		attrs:    attrs,
@@ -153,6 +162,7 @@ func (d *Database) PutDocument(ctx context.Context, doc *document.Document) erro
 				return fmt.Errorf("embedding: %w", err)
 			}
 			doc.Embedding = emb
+			doc.EmbeddingModel = d.Schema.EmbeddingModel
 		}
 	}
 
@@ -263,12 +273,18 @@ func (d *Database) DeleteDocument(ctx context.Context, id string) error {
 
 // indexDocument enqueues a document for async indexing.
 func (d *Database) indexDocument(doc *document.Document) {
-	d.indexCh <- indexOp{doc: doc}
+	d.mu.RLock()
+	ch := d.indexCh
+	d.mu.RUnlock()
+	ch <- indexOp{doc: doc}
 }
 
 // deindexDocument enqueues a document removal for async indexing.
 func (d *Database) deindexDocument(id string) {
-	d.indexCh <- indexOp{delete: id}
+	d.mu.RLock()
+	ch := d.indexCh
+	d.mu.RUnlock()
+	ch <- indexOp{delete: id}
 }
 
 // indexWorker drains the index channel and applies operations.
@@ -304,11 +320,15 @@ func (d *Database) indexWorker() {
 
 // SearchVector performs a vector similarity search.
 func (d *Database) SearchVector(ctx context.Context, query []float32, k int) ([]*document.Document, error) {
-	if d.vector == nil {
+	d.mu.RLock()
+	v := d.vector
+	d.mu.RUnlock()
+
+	if v == nil {
 		return nil, fmt.Errorf("vector search not configured (no embedding dimensions)")
 	}
 
-	results, err := d.vector.Search(query, k)
+	results, err := v.Search(query, k)
 	if err != nil {
 		return nil, err
 	}
@@ -332,11 +352,15 @@ func (d *Database) SearchVectorByText(ctx context.Context, queryText string, k i
 
 // SearchText performs a full-text search.
 func (d *Database) SearchText(ctx context.Context, query string, limit, offset int) ([]*document.Document, int, error) {
-	if d.bleve == nil {
+	d.mu.RLock()
+	b := d.bleve
+	d.mu.RUnlock()
+
+	if b == nil {
 		return nil, 0, fmt.Errorf("full-text search not available")
 	}
 
-	results, total, err := d.bleve.Search(query, limit, offset)
+	results, total, err := b.Search(query, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -352,7 +376,11 @@ func (d *Database) SearchText(ctx context.Context, query string, limit, offset i
 
 // SearchAttributes performs an attribute filter search.
 func (d *Database) SearchAttributes(ctx context.Context, filters []index.Filter, limit, offset int) ([]*document.Document, error) {
-	ids := d.attrs.Search(filters)
+	d.mu.RLock()
+	a := d.attrs
+	d.mu.RUnlock()
+
+	ids := a.Search(filters)
 
 	// Apply pagination.
 	if offset >= len(ids) {
@@ -402,21 +430,131 @@ func buildEmbeddingText(doc *document.Document) string {
 	return strings.Join(parts, "\n")
 }
 
-// Close shuts down the database and its indexes.
-func (d *Database) Close() error {
+// stopIndexing stops the builder and drains the index worker without closing the LSM.
+func (d *Database) stopIndexing() {
 	if d.builder != nil {
 		d.builder.Close()
+		d.builder = nil
 	}
-	// Drain pending index ops before closing indexes.
 	close(d.indexCh)
 	d.indexWg.Wait()
+}
+
+// Close shuts down the database and its indexes.
+func (d *Database) Close() error {
+	// Cancel any active re-embed job.
+	if d.reembedCancel != nil {
+		d.reembedCancel()
+	}
+	d.reembedWg.Wait()
+
+	d.stopIndexing()
 	if d.bleve != nil {
 		d.bleve.Close()
 	}
 	return d.db.Close()
 }
 
-// UpdateSchema updates the database schema.
-func (d *Database) UpdateSchema(schema *document.Schema) {
-	d.Schema = schema
+// RebuildIndexes detects schema changes and rebuilds affected indexes.
+func (d *Database) RebuildIndexes(ctx context.Context, oldSchema, newSchema *document.Schema) error {
+	changes := document.DiffSchemas(oldSchema, newSchema)
+	if !changes.Changed() {
+		d.Schema = newSchema
+		return nil
+	}
+
+	slog.Info("schema change detected, rebuilding indexes",
+		"db", d.Name,
+		"embedding_changed", changes.EmbeddingChanged,
+		"indexed_changed", changes.IndexedFieldsChanged,
+		"fulltext_changed", changes.FullTextFieldsChanged,
+	)
+
+	// Cancel any running re-embed job.
+	if d.reembedCancel != nil {
+		d.reembedCancel()
+	}
+	d.reembedWg.Wait()
+	d.reembedCancel = nil
+
+	d.mu.Lock()
+
+	// Stop old indexing pipeline.
+	d.stopIndexing()
+
+	// Rebuild Bleve if full_text fields changed.
+	if changes.FullTextFieldsChanged {
+		if d.bleve != nil {
+			oldPath := d.bleve.Path()
+			d.bleve.Close()
+			os.RemoveAll(oldPath)
+			d.bleve = nil
+		}
+		if d.cacheDir != "" {
+			var err error
+			d.bleve, err = index.NewBleveIndex(d.cacheDir, d.Name, newSchema)
+			if err != nil {
+				slog.Warn("failed to create bleve index during rebuild", "db", d.Name, "err", err)
+			}
+		}
+	}
+
+	// Rebuild attribute index if indexed fields changed.
+	if changes.IndexedFieldsChanged {
+		d.attrs = index.NewAttributeIndex()
+	}
+
+	// Rebuild vector index if embedding config changed.
+	if changes.EmbeddingChanged {
+		// Delete old HNSW cache.
+		if d.cacheDir != "" {
+			os.Remove(filepath.Join(d.cacheDir, "hnsw", d.Name+".hnsw"))
+		}
+		d.vector = nil
+		if newSchema != nil && newSchema.EmbeddingDimensions > 0 {
+			d.vector = index.NewVectorIndex(newSchema.EmbeddingDimensions)
+		}
+	}
+
+	d.Schema = newSchema
+
+	// Create new index channel and worker.
+	d.indexCh = make(chan indexOp, 1024)
+	d.indexWg.Add(1)
+	go d.indexWorker()
+
+	d.mu.Unlock()
+
+	// Delete checkpoint to force full rebuild.
+	if d.cacheDir != "" {
+		index.DeleteCheckpoint(d.cacheDir, d.Name)
+	}
+
+	// Start new builder.
+	d.builder = index.NewBuilder(index.BuilderConfig{
+		DB:       d.db,
+		Schema:   newSchema,
+		Bleve:    d.bleve,
+		Vector:   d.vector,
+		Attrs:    d.attrs,
+		CacheDir: d.cacheDir,
+		DBName:   d.Name,
+	})
+
+	// If embedding config changed and we have a model, start background re-embed.
+	if changes.EmbeddingChanged && d.embedder != nil && newSchema != nil && newSchema.EmbeddingModel != "" {
+		reembedCtx, cancel := context.WithCancel(context.Background())
+		d.reembedCancel = cancel
+		job := &reembedJob{
+			db:    d,
+			model: newSchema.EmbeddingModel,
+		}
+		d.reembedWg.Add(1)
+		go func() {
+			defer d.reembedWg.Done()
+			job.run(reembedCtx)
+		}()
+	}
+
+	return nil
 }

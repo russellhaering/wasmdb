@@ -10,10 +10,11 @@ import (
 
 // Binary format flags.
 const (
-	flagTombstone  byte = 1 << 0
-	flagHasContent byte = 1 << 1
-	flagHasAttrs   byte = 1 << 2
-	flagHasEmbed   byte = 1 << 3
+	flagTombstone      byte = 1 << 0
+	flagHasContent     byte = 1 << 1
+	flagHasAttrs       byte = 1 << 2
+	flagHasEmbed       byte = 1 << 3
+	flagHasEmbedModel  byte = 1 << 4
 )
 
 // Serialize encodes a Document into a binary representation for SSTable storage.
@@ -33,6 +34,9 @@ func Serialize(doc *Document) ([]byte, error) {
 	if len(doc.Embedding) > 0 {
 		flags |= flagHasEmbed
 	}
+	if doc.EmbeddingModel != "" {
+		flags |= flagHasEmbedModel
+	}
 
 	// Pre-compute size.
 	size := 1 + 8 + 8 + 8 // flags + version + timestamps
@@ -51,6 +55,9 @@ func Serialize(doc *Document) ([]byte, error) {
 	}
 	if flags&flagHasEmbed != 0 {
 		size += 4 + len(doc.Embedding)*4
+	}
+	if flags&flagHasEmbedModel != 0 {
+		size += 2 + len(doc.EmbeddingModel)
 	}
 
 	buf := make([]byte, size)
@@ -87,6 +94,12 @@ func Serialize(doc *Document) ([]byte, error) {
 			binary.LittleEndian.PutUint32(buf[off:], math.Float32bits(f))
 			off += 4
 		}
+	}
+
+	if flags&flagHasEmbedModel != 0 {
+		binary.LittleEndian.PutUint16(buf[off:], uint16(len(doc.EmbeddingModel)))
+		off += 2
+		off += copy(buf[off:], doc.EmbeddingModel)
 	}
 
 	return buf, nil
@@ -173,6 +186,19 @@ func Deserialize(data []byte) (*Document, error) {
 			doc.Embedding[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[off:]))
 			off += 4
 		}
+	}
+
+	if flags&flagHasEmbedModel != 0 {
+		if off+2 > len(data) {
+			return nil, errors.New("truncated embedding model length")
+		}
+		mLen := int(binary.LittleEndian.Uint16(data[off:]))
+		off += 2
+		if off+mLen > len(data) {
+			return nil, errors.New("truncated embedding model")
+		}
+		doc.EmbeddingModel = string(data[off : off+mLen])
+		off += mLen
 	}
 
 	return doc, nil

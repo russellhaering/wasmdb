@@ -79,6 +79,176 @@ func TestSchemaValidate(t *testing.T) {
 	}
 }
 
+func TestDiffSchemas(t *testing.T) {
+	tests := []struct {
+		name string
+		old  *Schema
+		new  *Schema
+		want SchemaChange
+	}{
+		{
+			name: "nil to nil",
+			old:  nil,
+			new:  nil,
+			want: SchemaChange{},
+		},
+		{
+			name: "nil to schema with embedding",
+			old:  nil,
+			new: &Schema{
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			want: SchemaChange{EmbeddingChanged: true},
+		},
+		{
+			name: "same embedding",
+			old: &Schema{
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			new: &Schema{
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			want: SchemaChange{},
+		},
+		{
+			name: "embedding model changed",
+			old: &Schema{
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			new: &Schema{
+				EmbeddingModel:      "text-embedding-3-large",
+				EmbeddingDimensions: 1536,
+			},
+			want: SchemaChange{EmbeddingChanged: true},
+		},
+		{
+			name: "embedding dimensions changed",
+			old: &Schema{
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			new: &Schema{
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 768,
+			},
+			want: SchemaChange{EmbeddingChanged: true},
+		},
+		{
+			name: "embedding removed",
+			old: &Schema{
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			new:  &Schema{},
+			want: SchemaChange{EmbeddingChanged: true},
+		},
+		{
+			name: "indexed field added",
+			old: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString},
+				},
+			},
+			new: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString, Indexed: true},
+				},
+			},
+			want: SchemaChange{IndexedFieldsChanged: true},
+		},
+		{
+			name: "indexed field removed",
+			old: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString, Indexed: true},
+				},
+			},
+			new: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString},
+				},
+			},
+			want: SchemaChange{IndexedFieldsChanged: true},
+		},
+		{
+			name: "same indexed fields",
+			old: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString, Indexed: true},
+				},
+			},
+			new: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString, Indexed: true},
+				},
+			},
+			want: SchemaChange{},
+		},
+		{
+			name: "full_text added",
+			old: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "title", Type: FieldTypeString},
+				},
+			},
+			new: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "title", Type: FieldTypeString, FullText: true},
+				},
+			},
+			want: SchemaChange{FullTextFieldsChanged: true},
+		},
+		{
+			name: "all changes at once",
+			old: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString},
+				},
+			},
+			new: &Schema{
+				Fields: []FieldDefinition{
+					{Name: "color", Type: FieldTypeString, Indexed: true, FullText: true},
+				},
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			want: SchemaChange{
+				EmbeddingChanged:      true,
+				IndexedFieldsChanged:  true,
+				FullTextFieldsChanged: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DiffSchemas(tt.old, tt.new)
+			if got != tt.want {
+				t.Errorf("DiffSchemas() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSchemaChangeChanged(t *testing.T) {
+	if (SchemaChange{}).Changed() {
+		t.Error("empty SchemaChange should not be Changed")
+	}
+	if !(SchemaChange{EmbeddingChanged: true}).Changed() {
+		t.Error("EmbeddingChanged should be Changed")
+	}
+	if !(SchemaChange{IndexedFieldsChanged: true}).Changed() {
+		t.Error("IndexedFieldsChanged should be Changed")
+	}
+	if !(SchemaChange{FullTextFieldsChanged: true}).Changed() {
+		t.Error("FullTextFieldsChanged should be Changed")
+	}
+}
+
 func TestFieldTypeMarshalRoundTrip(t *testing.T) {
 	types := []FieldType{
 		FieldTypeString, FieldTypeInt, FieldTypeFloat, FieldTypeBool,

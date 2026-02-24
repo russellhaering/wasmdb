@@ -122,6 +122,17 @@ func (p *Pipeline) Close() {
 	}
 }
 
+// EmbedBatch calls the underlying Embedder directly with an explicit batch,
+// bypassing the timer-based single-text batching. Used by the re-embed job.
+func (p *Pipeline) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return p.embedder.Embed(ctx, texts)
+}
+
+// ModelName returns the model name of the underlying embedder.
+func (p *Pipeline) ModelName() string {
+	return p.embedder.ModelName()
+}
+
 // Dimensions returns the embedding dimensions.
 func (p *Pipeline) Dimensions() int {
 	return p.embedder.Dimensions()
