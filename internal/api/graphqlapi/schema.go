@@ -3,11 +3,18 @@ package graphqlapi
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/graphql-go/graphql"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/document"
 )
+
+// sanitizeGraphQLName replaces characters that are invalid in GraphQL identifiers
+// with underscores. GraphQL names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/.
+func sanitizeGraphQLName(name string) string {
+	return strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(name)
+}
 
 // buildSchema constructs a graphql.Schema from the current state of the registry.
 // Each database gets its own document type with typed attribute fields, plus
@@ -33,8 +40,9 @@ func buildSchema(ctx context.Context, registry *database.Registry) (graphql.Sche
 	}
 
 	for _, meta := range metas {
-		docType := buildDocumentType(meta.Name, meta.Schema)
-		addDatabaseQueryFields(queryFields, registry, meta.Name, meta.Schema, docType)
+		safeName := sanitizeGraphQLName(meta.Name)
+		docType := buildDocumentType(safeName, meta.Schema)
+		addDatabaseQueryFields(queryFields, registry, meta.Name, safeName, meta.Schema, docType)
 	}
 
 	schemaConfig := graphql.SchemaConfig{
@@ -81,15 +89,18 @@ func textSearchResultType(dbName string, docType *graphql.Object) *graphql.Objec
 }
 
 // addDatabaseQueryFields adds get/search query fields for a database.
+// dbName is the actual database name (used in resolvers), safeName is the
+// GraphQL-safe identifier (used in type/field names).
 func addDatabaseQueryFields(
 	fields graphql.Fields,
 	registry *database.Registry,
 	dbName string,
+	safeName string,
 	schema *document.Schema,
 	docType *graphql.Object,
 ) {
 	// Get document by ID.
-	fields["get_"+dbName] = &graphql.Field{
+	fields["get_"+safeName] = &graphql.Field{
 		Type:        docType,
 		Description: fmt.Sprintf("Get a document by ID from the %s database", dbName),
 		Args: graphql.FieldConfigArgument{
@@ -99,8 +110,8 @@ func addDatabaseQueryFields(
 	}
 
 	// Full-text search.
-	fields["search_"+dbName+"_text"] = &graphql.Field{
-		Type:        textSearchResultType(dbName, docType),
+	fields["search_"+safeName+"_text"] = &graphql.Field{
+		Type:        textSearchResultType(safeName, docType),
 		Description: fmt.Sprintf("Full-text search in the %s database", dbName),
 		Args: graphql.FieldConfigArgument{
 			"query":  &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
@@ -112,7 +123,7 @@ func addDatabaseQueryFields(
 
 	// Vector search (by text query).
 	if schema != nil && schema.EmbeddingDimensions > 0 {
-		fields["search_"+dbName+"_vector"] = &graphql.Field{
+		fields["search_"+safeName+"_vector"] = &graphql.Field{
 			Type:        graphql.NewList(graphql.NewNonNull(docType)),
 			Description: fmt.Sprintf("Vector similarity search in the %s database", dbName),
 			Args: graphql.FieldConfigArgument{
@@ -124,7 +135,7 @@ func addDatabaseQueryFields(
 	}
 
 	// Attribute search.
-	fields["search_"+dbName+"_attributes"] = &graphql.Field{
+	fields["search_"+safeName+"_attributes"] = &graphql.Field{
 		Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(docType))),
 		Description: fmt.Sprintf("Attribute filter search in the %s database", dbName),
 		Args: graphql.FieldConfigArgument{
