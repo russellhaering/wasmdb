@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/storage/lsm"
@@ -78,26 +77,20 @@ func (b *Builder) run() {
 		}
 	}
 
-	// Initial full rebuild if no checkpoint.
+	// Catch up on any documents written before this process started.
+	// Ongoing indexing happens inline in Database.PutDocument / DeleteDocument.
 	if b.lastSeqNum == 0 {
 		if err := b.fullRebuild(); err != nil {
 			slog.Error("index: full rebuild failed", "err", err)
 		}
-	}
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-b.closeCh:
-			return
-		case <-ticker.C:
-			if err := b.poll(); err != nil {
-				slog.Error("index: poll failed", "err", err)
-			}
+	} else {
+		if err := b.incrementalCatchUp(); err != nil {
+			slog.Error("index: incremental catch-up failed", "err", err)
 		}
 	}
+
+	// Wait for close signal. No polling needed — indexing happens inline.
+	<-b.closeCh
 }
 
 func (b *Builder) maxSeqInStore() uint64 {
@@ -137,31 +130,30 @@ func (b *Builder) fullRebuild() error {
 	return nil
 }
 
-func (b *Builder) poll() error {
+func (b *Builder) incrementalCatchUp() error {
 	ctx := context.Background()
-	entries, err := b.db.Scan(ctx)
+	entries, err := b.db.ScanSince(ctx, b.lastSeqNum)
 	if err != nil {
-		return err
+		return fmt.Errorf("index: scan since %d: %w", b.lastSeqNum, err)
 	}
 
-	var indexed int
+	if len(entries) == 0 {
+		return nil
+	}
+
+	slog.Info("index: incremental catch-up", "entries", len(entries), "since_seq", b.lastSeqNum, "db", b.dbName)
+
 	for _, e := range entries {
-		if e.SeqNum <= b.lastSeqNum {
-			continue
-		}
 		if err := b.indexEntry(e); err != nil {
-			slog.Error("index: poll entry", "key", e.Key, "err", err)
-			continue
+			slog.Error("index: catch-up entry", "key", e.Key, "err", err)
 		}
 		if e.SeqNum > b.lastSeqNum {
 			b.lastSeqNum = e.SeqNum
 		}
-		indexed++
 	}
 
-	if indexed > 0 {
-		b.saveCheckpoint()
-	}
+	b.saveCheckpoint()
+	slog.Info("index: catch-up complete", "entries", len(entries), "db", b.dbName)
 	return nil
 }
 

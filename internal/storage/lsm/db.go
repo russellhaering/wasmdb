@@ -138,6 +138,15 @@ func (db *DB) Scan(ctx context.Context) ([]Entry, error) {
 	return db.reader.Scan(ctx, active, frozen, manifest)
 }
 
+// ScanSince returns all entries (including tombstones) with SeqNum > sinceSeq,
+// skipping SSTables that contain no new data.
+func (db *DB) ScanSince(ctx context.Context, sinceSeq uint64) ([]Entry, error) {
+	active := db.writer.ActiveMemTable()
+	frozen := db.writer.FrozenMemTables()
+	manifest := db.writer.CurrentManifest()
+	return db.reader.ScanSince(ctx, sinceSeq, active, frozen, manifest)
+}
+
 // Close shuts down the database, stopping background compaction.
 func (db *DB) Close() error {
 	db.closeOnce.Do(func() {

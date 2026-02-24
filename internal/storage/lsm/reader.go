@@ -1,8 +1,10 @@
 package lsm
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/russellhaering/wasmdb/internal/storage/cache"
 	"github.com/russellhaering/wasmdb/internal/storage/objstore"
@@ -203,9 +205,104 @@ func (r *Reader) Scan(ctx context.Context, active *MemTable, frozen []*MemTable,
 }
 
 func sortEntries(entries []Entry) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && entries[j].Key < entries[j-1].Key; j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
+	slices.SortFunc(entries, func(a, b Entry) int {
+		return cmp.Compare(a.Key, b.Key)
+	})
+}
+
+// ScanSince returns all entries (including tombstones) with SeqNum > sinceSeq,
+// after deduplication. SSTables whose MaxSeq <= sinceSeq are skipped entirely.
+// Unlike Scan, tombstones are included so the caller can handle deletes.
+func (r *Reader) ScanSince(ctx context.Context, sinceSeq uint64, active *MemTable, frozen []*MemTable, manifest *Manifest) ([]Entry, error) {
+	type prioritizedEntry struct {
+		entry    Entry
+		priority int
+	}
+
+	var all []prioritizedEntry
+	priority := 0
+
+	// Active MemTable — iterate all, filter by SeqNum.
+	iter := active.Iterator()
+	for iter.Next() {
+		e := iter.Entry()
+		if e.SeqNum > sinceSeq {
+			all = append(all, prioritizedEntry{entry: e, priority: priority})
 		}
 	}
+	priority++
+
+	// Frozen MemTables.
+	for _, mt := range frozen {
+		iter := mt.Iterator()
+		for iter.Next() {
+			e := iter.Entry()
+			if e.SeqNum > sinceSeq {
+				all = append(all, prioritizedEntry{entry: e, priority: priority})
+			}
+		}
+		priority++
+	}
+
+	// L0 SSTables — skip entirely if MaxSeq <= sinceSeq.
+	for _, sst := range manifest.L0 {
+		if sst.MaxSeq <= sinceSeq {
+			continue
+		}
+		reader, err := r.loadSSTable(ctx, sst)
+		if err != nil {
+			return nil, err
+		}
+		si := reader.Iterator()
+		for si.Next() {
+			e := si.Entry()
+			if e.SeqNum > sinceSeq {
+				all = append(all, prioritizedEntry{entry: e, priority: priority})
+			}
+		}
+		priority++
+	}
+
+	// Sorted runs — same skip/filter logic.
+	for _, run := range manifest.SortedRuns {
+		for _, sst := range run.SSTables {
+			if sst.MaxSeq <= sinceSeq {
+				continue
+			}
+			reader, err := r.loadSSTable(ctx, sst)
+			if err != nil {
+				return nil, err
+			}
+			si := reader.Iterator()
+			for si.Next() {
+				e := si.Entry()
+				if e.SeqNum > sinceSeq {
+					all = append(all, prioritizedEntry{entry: e, priority: priority})
+				}
+			}
+		}
+		priority++
+	}
+
+	// Deduplicate: for each key, keep the entry with the lowest priority (newest source).
+	best := make(map[string]prioritizedEntry)
+	for _, pe := range all {
+		existing, ok := best[pe.entry.Key]
+		if !ok || pe.priority < existing.priority {
+			best[pe.entry.Key] = pe
+		}
+	}
+
+	// Only emit entries whose winning version has SeqNum > sinceSeq.
+	// (This is already guaranteed since all candidates have SeqNum > sinceSeq,
+	// but we keep the check explicit for clarity.)
+	result := make([]Entry, 0, len(best))
+	for _, pe := range best {
+		if pe.entry.SeqNum > sinceSeq {
+			result = append(result, pe.entry)
+		}
+	}
+
+	sortEntries(result)
+	return result, nil
 }
