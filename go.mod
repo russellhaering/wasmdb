@@ -3,6 +3,7 @@ module github.com/russellhaering/wasmdb
 go 1.25.7
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/aws/aws-sdk-go-v2 v1.41.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.9
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
@@ -10,6 +11,8 @@ require (
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/coder/hnsw v0.6.1
 	github.com/google/btree v1.1.3
+	github.com/graphql-go/graphql v0.8.1
+	github.com/modelcontextprotocol/go-sdk v1.3.1
 	github.com/oklog/ulid/v2 v2.1.1
 )
 
@@ -50,14 +53,23 @@ require (
 	github.com/blevesearch/zapx/v16 v16.2.8 // indirect
 	github.com/chewxy/math32 v1.10.1 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
+	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/renameio v1.0.1 // indirect
-	github.com/graphql-go/graphql v0.8.1 // indirect
 	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.3 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/viterin/partial v1.1.0 // indirect
 	github.com/viterin/vek v0.4.2 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.etcd.io/bbolt v1.4.0 // indirect
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/oauth2 v0.30.0 // indirect
+	golang.org/x/sync v0.16.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )

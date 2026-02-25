@@ -9,23 +9,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/russellhaering/wasmdb/internal/agent"
 	"github.com/russellhaering/wasmdb/internal/api/graphqlapi"
 	"github.com/russellhaering/wasmdb/internal/database"
 )
 
 // Server is the HTTP server for the WasmDB API.
 type Server struct {
-	httpServer *http.Server
-	registry   *database.Registry
-	graphql    *graphqlapi.Handler
-	apiTokens  map[string]struct{}
+	httpServer  *http.Server
+	registry    *database.Registry
+	graphql     *graphqlapi.Handler
+	chatManager *agent.ChatManager
+	apiTokens   map[string]struct{}
 }
 
 // ServerConfig configures the API server.
 type ServerConfig struct {
-	ListenAddr string
-	Registry   *database.Registry
-	APITokens  []string
+	ListenAddr      string
+	Registry        *database.Registry
+	APITokens       []string
+	AnthropicAPIKey string
 }
 
 // NewServer creates a new API server.
@@ -46,7 +49,20 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	}
 	s.graphql = gqlHandler
 
-	// Rebuild the GraphQL schema when databases change.
+	// Initialize chat agent if Anthropic API key is provided.
+	if cfg.AnthropicAPIKey != "" {
+		cm, err := agent.NewChatManager(ctx, agent.ChatConfig{
+			AnthropicAPIKey: cfg.AnthropicAPIKey,
+			Registry:        cfg.Registry,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("init chat agent: %w", err)
+		}
+		s.chatManager = cm
+		slog.Info("chat agent enabled")
+	}
+
+	// Rebuild the GraphQL schema when tables change.
 	cfg.Registry.OnSchemaChange = func(ctx context.Context) {
 		if err := gqlHandler.RebuildSchema(ctx); err != nil {
 			slog.Error("failed to rebuild graphql schema", "err", err)
@@ -62,7 +78,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		Addr:         cfg.ListenAddr,
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		WriteTimeout: 5 * time.Minute,
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -121,8 +137,11 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}()
 
-		// Auth — skip for health check endpoints.
-		if r.URL.Path != "/healthz" && r.URL.Path != "/readyz" {
+		// Auth — skip for health check and chat UI page.
+		switch r.URL.Path {
+		case "/healthz", "/readyz", "/chat":
+			// No auth required.
+		default:
 			if !s.checkAuth(r) {
 				writeError(w, ErrUnauthorized)
 				return
@@ -151,4 +170,10 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }

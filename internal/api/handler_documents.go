@@ -13,11 +13,11 @@ type createDocumentRequest struct {
 }
 
 func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
@@ -33,7 +33,7 @@ func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 		Attributes: req.Attributes,
 	}
 
-	if err := db.PutDocument(r.Context(), doc); err != nil {
+	if err := table.PutDocument(r.Context(), doc); err != nil {
 		writeErrorMsg(w, 400, "bad_request", err.Error())
 		return
 	}
@@ -42,11 +42,11 @@ func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBulkCreateDocuments(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
@@ -61,7 +61,7 @@ func (s *Server) handleBulkCreateDocuments(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.PutDocumentsBulk(r.Context(), docs); err != nil {
+	if err := table.PutDocumentsBulk(r.Context(), docs); err != nil {
 		writeErrorMsg(w, 400, "bad_request", err.Error())
 		return
 	}
@@ -70,16 +70,16 @@ func (s *Server) handleBulkCreateDocuments(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 	docID := r.PathValue("id")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
-	doc, err := db.GetDocument(r.Context(), docID)
+	doc, err := table.GetDocument(r.Context(), docID)
 	if err != nil {
 		writeErrorMsg(w, 500, "internal_error", err.Error())
 		return
@@ -93,12 +93,12 @@ func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 	docID := r.PathValue("id")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
@@ -114,7 +114,7 @@ func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		Attributes: req.Attributes,
 	}
 
-	if err := db.PutDocument(r.Context(), doc); err != nil {
+	if err := table.PutDocument(r.Context(), doc); err != nil {
 		writeErrorMsg(w, 400, "bad_request", err.Error())
 		return
 	}
@@ -123,16 +123,16 @@ func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 	docID := r.PathValue("id")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
-	if err := db.DeleteDocument(r.Context(), docID); err != nil {
+	if err := table.DeleteDocument(r.Context(), docID); err != nil {
 		writeErrorMsg(w, 500, "internal_error", err.Error())
 		return
 	}

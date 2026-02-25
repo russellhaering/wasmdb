@@ -4,30 +4,34 @@ import "net/http"
 
 // registerRoutes sets up all API routes using Go 1.22+ enhanced routing.
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-	// Database management.
-	mux.HandleFunc("POST /v1/databases", s.handleCreateDatabase)
-	mux.HandleFunc("GET /v1/databases", s.handleListDatabases)
-	mux.HandleFunc("GET /v1/databases/{db}", s.handleGetDatabase)
-	mux.HandleFunc("DELETE /v1/databases/{db}", s.handleDeleteDatabase)
+	// Table management.
+	mux.HandleFunc("POST /v1/tables", s.handleCreateTable)
+	mux.HandleFunc("GET /v1/tables", s.handleListTables)
+	mux.HandleFunc("GET /v1/tables/{table}", s.handleGetTable)
+	mux.HandleFunc("DELETE /v1/tables/{table}", s.handleDeleteTable)
 
 	// Schema.
-	mux.HandleFunc("GET /v1/databases/{db}/schema", s.handleGetSchema)
-	mux.HandleFunc("PUT /v1/databases/{db}/schema", s.handleUpdateSchema)
+	mux.HandleFunc("GET /v1/tables/{table}/schema", s.handleGetSchema)
+	mux.HandleFunc("PUT /v1/tables/{table}/schema", s.handleUpdateSchema)
 
 	// Documents.
-	mux.HandleFunc("POST /v1/databases/{db}/documents", s.handleCreateDocument)
-	mux.HandleFunc("POST /v1/databases/{db}/documents/_bulk", s.handleBulkCreateDocuments)
-	mux.HandleFunc("GET /v1/databases/{db}/documents/{id}", s.handleGetDocument)
-	mux.HandleFunc("PUT /v1/databases/{db}/documents/{id}", s.handleUpdateDocument)
-	mux.HandleFunc("DELETE /v1/databases/{db}/documents/{id}", s.handleDeleteDocument)
+	mux.HandleFunc("POST /v1/tables/{table}/documents", s.handleCreateDocument)
+	mux.HandleFunc("POST /v1/tables/{table}/documents/_bulk", s.handleBulkCreateDocuments)
+	mux.HandleFunc("GET /v1/tables/{table}/documents/{id}", s.handleGetDocument)
+	mux.HandleFunc("PUT /v1/tables/{table}/documents/{id}", s.handleUpdateDocument)
+	mux.HandleFunc("DELETE /v1/tables/{table}/documents/{id}", s.handleDeleteDocument)
 
 	// Search.
-	mux.HandleFunc("POST /v1/databases/{db}/search/vector", s.handleVectorSearch)
-	mux.HandleFunc("POST /v1/databases/{db}/search/text", s.handleTextSearch)
-	mux.HandleFunc("POST /v1/databases/{db}/search/attributes", s.handleAttributeSearch)
+	mux.HandleFunc("POST /v1/tables/{table}/search/vector", s.handleVectorSearch)
+	mux.HandleFunc("POST /v1/tables/{table}/search/text", s.handleTextSearch)
+	mux.HandleFunc("POST /v1/tables/{table}/search/attributes", s.handleAttributeSearch)
 
 	// GraphQL.
 	mux.Handle("POST /v1/graphql", s.graphql)
+
+	// Chat.
+	mux.HandleFunc("GET /chat", s.handleChatUI)
+	mux.HandleFunc("POST /v1/chat", s.handleChatStream)
 
 	// Health.
 	mux.HandleFunc("GET /healthz", s.handleHealthz)

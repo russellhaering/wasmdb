@@ -17,32 +17,32 @@ func sanitizeGraphQLName(name string) string {
 }
 
 // buildSchema constructs a graphql.Schema from the current state of the registry.
-// Each database gets its own document type with typed attribute fields, plus
+// Each table gets its own document type with typed attribute fields, plus
 // query fields for get, text search, vector search, and attribute search.
 func buildSchema(ctx context.Context, registry *database.Registry) (graphql.Schema, error) {
 	queryFields := graphql.Fields{
-		"databases": &graphql.Field{
-			Type:    graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(databaseInfoType))),
-			Resolve: resolveListDatabases(registry),
+		"tables": &graphql.Field{
+			Type:    graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(tableInfoType))),
+			Resolve: resolveListTables(registry),
 		},
-		"database": &graphql.Field{
-			Type: databaseInfoType,
+		"table": &graphql.Field{
+			Type: tableInfoType,
 			Args: graphql.FieldConfigArgument{
 				"name": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 			},
-			Resolve: resolveGetDatabase(registry),
+			Resolve: resolveGetTable(registry),
 		},
 	}
 
-	metas, err := registry.ListDatabases(ctx)
+	metas, err := registry.ListTables(ctx)
 	if err != nil {
-		return graphql.Schema{}, fmt.Errorf("list databases: %w", err)
+		return graphql.Schema{}, fmt.Errorf("list tables: %w", err)
 	}
 
 	for _, meta := range metas {
 		safeName := sanitizeGraphQLName(meta.Name)
 		docType := buildDocumentType(safeName, meta.Schema)
-		addDatabaseQueryFields(queryFields, registry, meta.Name, safeName, meta.Schema, docType)
+		addTableQueryFields(queryFields, registry, meta.Name, safeName, meta.Schema, docType)
 	}
 
 	schemaConfig := graphql.SchemaConfig{
@@ -55,7 +55,7 @@ func buildSchema(ctx context.Context, registry *database.Registry) (graphql.Sche
 	return graphql.NewSchema(schemaConfig)
 }
 
-// buildDocumentType creates a GraphQL object type for documents in a specific database.
+// buildDocumentType creates a GraphQL object type for documents in a specific table.
 // It includes base document fields plus typed fields for each schema attribute.
 func buildDocumentType(dbName string, schema *document.Schema) *graphql.Object {
 	fields := baseDocumentFields()
@@ -77,7 +77,7 @@ func buildDocumentType(dbName string, schema *document.Schema) *graphql.Object {
 	})
 }
 
-// textSearchResultType creates a per-database text search result type wrapping documents + total.
+// textSearchResultType creates a per-table text search result type wrapping documents + total.
 func textSearchResultType(dbName string, docType *graphql.Object) *graphql.Object {
 	return graphql.NewObject(graphql.ObjectConfig{
 		Name: dbName + "_TextSearchResult",
@@ -88,10 +88,10 @@ func textSearchResultType(dbName string, docType *graphql.Object) *graphql.Objec
 	})
 }
 
-// addDatabaseQueryFields adds get/search query fields for a database.
-// dbName is the actual database name (used in resolvers), safeName is the
+// addTableQueryFields adds get/search query fields for a table.
+// dbName is the actual table name (used in resolvers), safeName is the
 // GraphQL-safe identifier (used in type/field names).
-func addDatabaseQueryFields(
+func addTableQueryFields(
 	fields graphql.Fields,
 	registry *database.Registry,
 	dbName string,
@@ -102,7 +102,7 @@ func addDatabaseQueryFields(
 	// Get document by ID.
 	fields["get_"+safeName] = &graphql.Field{
 		Type:        docType,
-		Description: fmt.Sprintf("Get a document by ID from the %s database", dbName),
+		Description: fmt.Sprintf("Get a document by ID from the %s table", dbName),
 		Args: graphql.FieldConfigArgument{
 			"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 		},
@@ -112,7 +112,7 @@ func addDatabaseQueryFields(
 	// Full-text search.
 	fields["search_"+safeName+"_text"] = &graphql.Field{
 		Type:        textSearchResultType(safeName, docType),
-		Description: fmt.Sprintf("Full-text search in the %s database", dbName),
+		Description: fmt.Sprintf("Full-text search in the %s table", dbName),
 		Args: graphql.FieldConfigArgument{
 			"query":  &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 			"limit":  &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 10},
@@ -125,7 +125,7 @@ func addDatabaseQueryFields(
 	if schema != nil && schema.EmbeddingDimensions > 0 {
 		fields["search_"+safeName+"_vector"] = &graphql.Field{
 			Type:        graphql.NewList(graphql.NewNonNull(docType)),
-			Description: fmt.Sprintf("Vector similarity search in the %s database", dbName),
+			Description: fmt.Sprintf("Vector similarity search in the %s table", dbName),
 			Args: graphql.FieldConfigArgument{
 				"query": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 				"k":     &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 10},
@@ -137,7 +137,7 @@ func addDatabaseQueryFields(
 	// Attribute search.
 	fields["search_"+safeName+"_attributes"] = &graphql.Field{
 		Type:        graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(docType))),
-		Description: fmt.Sprintf("Attribute filter search in the %s database", dbName),
+		Description: fmt.Sprintf("Attribute filter search in the %s table", dbName),
 		Args: graphql.FieldConfigArgument{
 			"filters": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(filterInput)))},
 			"limit":   &graphql.ArgumentConfig{Type: graphql.Int, DefaultValue: 10},

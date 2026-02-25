@@ -13,8 +13,8 @@ import (
 	"github.com/russellhaering/wasmdb/internal/storage/objstore"
 )
 
-// helper: create a Database backed by an in-memory store.
-func newTestDatabase(t *testing.T, name string) (*Database, func()) {
+// helper: create a Table backed by an in-memory store.
+func newTestTable(t *testing.T, name string) (*Table, func()) {
 	t.Helper()
 	ctx := context.Background()
 	store := objstore.NewMemoryStore()
@@ -37,26 +37,26 @@ func newTestDatabase(t *testing.T, name string) (*Database, func()) {
 		},
 	}
 
-	db, err := NewDatabase(DatabaseConfig{
+	tbl, err := NewTable(TableConfig{
 		Name:     name,
 		Schema:   schema,
 		DB:       lsmDB,
 		CacheDir: cacheDir,
 	})
 	if err != nil {
-		t.Fatalf("NewDatabase: %v", err)
+		t.Fatalf("NewTable: %v", err)
 	}
 
 	cleanup := func() {
-		db.Close()
+		tbl.Close()
 	}
-	return db, cleanup
+	return tbl, cleanup
 }
 
 // TestConcurrentPutDocumentSameID verifies that concurrent updates to the same
 // document ID don't lose data or corrupt state.
 func TestConcurrentPutDocumentSameID(t *testing.T) {
-	db, cleanup := newTestDatabase(t, "concurrent")
+	db, cleanup := newTestTable(t, "concurrent")
 	defer cleanup()
 
 	ctx := context.Background()
@@ -111,7 +111,7 @@ func TestConcurrentPutDocumentSameID(t *testing.T) {
 // TestConcurrentPutDocumentDifferentIDs verifies concurrent writes to different
 // documents all succeed.
 func TestConcurrentPutDocumentDifferentIDs(t *testing.T) {
-	db, cleanup := newTestDatabase(t, "concurrent-diff")
+	db, cleanup := newTestTable(t, "concurrent-diff")
 	defer cleanup()
 
 	ctx := context.Background()
@@ -163,7 +163,7 @@ func TestConcurrentPutDocumentDifferentIDs(t *testing.T) {
 // TestIndexChannelDrain verifies that all index operations are processed
 // even when many documents are written quickly.
 func TestIndexChannelDrain(t *testing.T) {
-	db, cleanup := newTestDatabase(t, "drain")
+	db, cleanup := newTestTable(t, "drain")
 	defer cleanup()
 
 	ctx := context.Background()
@@ -202,7 +202,7 @@ func TestIndexChannelDrain(t *testing.T) {
 // TestIndexChannelProcessesDeletes verifies that delete operations flow
 // through the index channel and remove documents from the index.
 func TestIndexChannelProcessesDeletes(t *testing.T) {
-	db, cleanup := newTestDatabase(t, "deletes")
+	db, cleanup := newTestTable(t, "deletes")
 	defer cleanup()
 
 	ctx := context.Background()
@@ -252,7 +252,7 @@ func TestIndexChannelProcessesDeletes(t *testing.T) {
 
 // TestSearchAttributesEmptyReturnsAll verifies that empty filters returns all docs.
 func TestSearchAttributesEmptyReturnsAll(t *testing.T) {
-	db, cleanup := newTestDatabase(t, "empty-filter")
+	db, cleanup := newTestTable(t, "empty-filter")
 	defer cleanup()
 
 	ctx := context.Background()
@@ -286,7 +286,7 @@ func TestSearchAttributesEmptyReturnsAll(t *testing.T) {
 
 // TestSearchAttributesPagination verifies offset/limit work correctly.
 func TestSearchAttributesPagination(t *testing.T) {
-	db, cleanup := newTestDatabase(t, "pagination")
+	db, cleanup := newTestTable(t, "pagination")
 	defer cleanup()
 
 	ctx := context.Background()

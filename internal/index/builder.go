@@ -78,7 +78,7 @@ func (b *Builder) run() {
 	}
 
 	// Catch up on any documents written before this process started.
-	// Ongoing indexing happens inline in Database.PutDocument / DeleteDocument.
+	// Ongoing indexing happens inline in Table.PutDocument / DeleteDocument.
 	if b.lastSeqNum == 0 {
 		if err := b.fullRebuild(); err != nil {
 			slog.Error("index: full rebuild failed", "err", err)
@@ -242,7 +242,7 @@ func (b *Builder) LastSeqNum() uint64 {
 	return b.lastSeqNum
 }
 
-// DeleteCheckpoint removes the checkpoint file for a database, forcing a full rebuild
+// DeleteCheckpoint removes the checkpoint file for a table, forcing a full rebuild
 // on the next Builder start.
 func DeleteCheckpoint(cacheDir, dbName string) {
 	path := filepath.Join(cacheDir, "checkpoints", dbName+".json")

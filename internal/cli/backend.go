@@ -7,8 +7,8 @@ import (
 	"github.com/russellhaering/wasmdb/internal/index"
 )
 
-// DatabaseInfo holds basic database metadata.
-type DatabaseInfo struct {
+// TableInfo holds basic table metadata.
+type TableInfo struct {
 	Name   string           `json:"name"`
 	Schema *document.Schema `json:"schema,omitempty"`
 }
@@ -31,10 +31,10 @@ type HealthStatus struct {
 
 // Backend defines the operations available to CLI commands.
 type Backend interface {
-	CreateDatabase(ctx context.Context, name string, schema *document.Schema) (*DatabaseInfo, error)
-	ListDatabases(ctx context.Context) ([]DatabaseInfo, error)
-	GetDatabase(ctx context.Context, name string) (*DatabaseInfo, error)
-	DeleteDatabase(ctx context.Context, name string) error
+	CreateTable(ctx context.Context, name string, schema *document.Schema) (*TableInfo, error)
+	ListTables(ctx context.Context) ([]TableInfo, error)
+	GetTable(ctx context.Context, name string) (*TableInfo, error)
+	DeleteTable(ctx context.Context, name string) error
 
 	GetSchema(ctx context.Context, db string) (*document.Schema, error)
 	UpdateSchema(ctx context.Context, db string, schema *document.Schema) (*document.Schema, error)

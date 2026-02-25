@@ -25,11 +25,11 @@ type attributeSearchRequest struct {
 }
 
 func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
@@ -45,9 +45,9 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request) {
 
 	var docs any
 	if len(req.Vector) > 0 {
-		docs, err = db.SearchVector(r.Context(), req.Vector, req.K)
+		docs, err = table.SearchVector(r.Context(), req.Vector, req.K)
 	} else if req.Query != "" {
-		docs, err = db.SearchVectorByText(r.Context(), req.Query, req.K)
+		docs, err = table.SearchVectorByText(r.Context(), req.Query, req.K)
 	} else {
 		writeErrorMsg(w, 400, "bad_request", "either vector or query is required")
 		return
@@ -62,11 +62,11 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
@@ -80,7 +80,7 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
-	results, total, err := db.SearchText(r.Context(), req.Query, req.Limit, req.Offset)
+	results, total, err := table.SearchText(r.Context(), req.Query, req.Limit, req.Offset)
 	if err != nil {
 		writeErrorMsg(w, 500, "internal_error", err.Error())
 		return
@@ -93,11 +93,11 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAttributeSearch(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (s *Server) handleAttributeSearch(w http.ResponseWriter, r *http.Request) {
 		req.Limit = 10
 	}
 
-	results, err := db.SearchAttributes(r.Context(), req.Filters, req.Limit, req.Offset)
+	results, err := table.SearchAttributes(r.Context(), req.Filters, req.Limit, req.Offset)
 	if err != nil {
 		writeErrorMsg(w, 500, "internal_error", err.Error())
 		return

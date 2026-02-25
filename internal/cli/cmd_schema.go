@@ -14,14 +14,14 @@ func init() {
 		noun:        "schema",
 		verb:        "get",
 		usage:       "wasmdb schema get <db> [--json]",
-		description: "Get database schema",
+		description: "Get table schema",
 		run:         schemaGet,
 	})
 	register(command{
 		noun:        "schema",
 		verb:        "set",
 		usage:       "wasmdb schema set <db> --file <path> [--json]",
-		description: "Set database schema",
+		description: "Set table schema",
 		run:         schemaSet,
 	})
 }

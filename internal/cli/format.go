@@ -18,19 +18,19 @@ func formatJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-// formatDatabaseList writes a compact list of database names.
-func formatDatabaseList(w io.Writer, dbs []DatabaseInfo) {
-	for _, db := range dbs {
-		fmt.Fprintln(w, db.Name)
+// formatTableList writes a compact list of table names.
+func formatTableList(w io.Writer, tables []TableInfo) {
+	for _, tbl := range tables {
+		fmt.Fprintln(w, tbl.Name)
 	}
 }
 
-// formatDatabaseInfo writes compact database info.
-func formatDatabaseInfo(w io.Writer, db *DatabaseInfo) {
-	fmt.Fprintf(w, "name: %s\n", db.Name)
-	if db.Schema != nil && len(db.Schema.Fields) > 0 {
+// formatTableInfo writes compact table info.
+func formatTableInfo(w io.Writer, tbl *TableInfo) {
+	fmt.Fprintf(w, "name: %s\n", tbl.Name)
+	if tbl.Schema != nil && len(tbl.Schema.Fields) > 0 {
 		fmt.Fprintln(w, "schema:")
-		for _, f := range db.Schema.Fields {
+		for _, f := range tbl.Schema.Fields {
 			flags := fieldFlags(f)
 			if flags != "" {
 				fmt.Fprintf(w, "  %s: %s (%s)\n", f.Name, f.Type, flags)
@@ -39,8 +39,8 @@ func formatDatabaseInfo(w io.Writer, db *DatabaseInfo) {
 			}
 		}
 	}
-	if db.Schema != nil && db.Schema.EmbeddingModel != "" {
-		fmt.Fprintf(w, "embedding_model: %s\n", db.Schema.EmbeddingModel)
+	if tbl.Schema != nil && tbl.Schema.EmbeddingModel != "" {
+		fmt.Fprintf(w, "embedding_model: %s\n", tbl.Schema.EmbeddingModel)
 	}
 }
 

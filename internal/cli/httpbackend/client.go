@@ -86,43 +86,43 @@ func (c *Client) do(ctx context.Context, method, path string, body any, result a
 	return nil
 }
 
-func (c *Client) CreateDatabase(ctx context.Context, name string, schema *document.Schema) (*cli.DatabaseInfo, error) {
+func (c *Client) CreateTable(ctx context.Context, name string, schema *document.Schema) (*cli.TableInfo, error) {
 	body := struct {
 		Name   string           `json:"name"`
 		Schema *document.Schema `json:"schema,omitempty"`
 	}{Name: name, Schema: schema}
 
-	var resp cli.DatabaseInfo
-	if err := c.do(ctx, http.MethodPost, "/v1/databases", body, &resp); err != nil {
+	var resp cli.TableInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/tables", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-func (c *Client) ListDatabases(ctx context.Context) ([]cli.DatabaseInfo, error) {
+func (c *Client) ListTables(ctx context.Context) ([]cli.TableInfo, error) {
 	// The API returns [{"name": "..."}] items.
-	var resp []cli.DatabaseInfo
-	if err := c.do(ctx, http.MethodGet, "/v1/databases", nil, &resp); err != nil {
+	var resp []cli.TableInfo
+	if err := c.do(ctx, http.MethodGet, "/v1/tables", nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
-func (c *Client) GetDatabase(ctx context.Context, name string) (*cli.DatabaseInfo, error) {
-	var resp cli.DatabaseInfo
-	if err := c.do(ctx, http.MethodGet, "/v1/databases/"+name, nil, &resp); err != nil {
+func (c *Client) GetTable(ctx context.Context, name string) (*cli.TableInfo, error) {
+	var resp cli.TableInfo
+	if err := c.do(ctx, http.MethodGet, "/v1/tables/"+name, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-func (c *Client) DeleteDatabase(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/databases/"+name, nil, nil)
+func (c *Client) DeleteTable(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/tables/"+name, nil, nil)
 }
 
 func (c *Client) GetSchema(ctx context.Context, db string) (*document.Schema, error) {
 	var resp document.Schema
-	if err := c.do(ctx, http.MethodGet, "/v1/databases/"+db+"/schema", nil, &resp); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/tables/"+db+"/schema", nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -130,7 +130,7 @@ func (c *Client) GetSchema(ctx context.Context, db string) (*document.Schema, er
 
 func (c *Client) UpdateSchema(ctx context.Context, db string, schema *document.Schema) (*document.Schema, error) {
 	var resp document.Schema
-	if err := c.do(ctx, http.MethodPut, "/v1/databases/"+db+"/schema", schema, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPut, "/v1/tables/"+db+"/schema", schema, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -148,7 +148,7 @@ func (c *Client) CreateDocument(ctx context.Context, db string, doc *document.Do
 	}
 
 	var resp document.Document
-	if err := c.do(ctx, http.MethodPost, "/v1/databases/"+db+"/documents", body, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/tables/"+db+"/documents", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -156,7 +156,7 @@ func (c *Client) CreateDocument(ctx context.Context, db string, doc *document.Do
 
 func (c *Client) GetDocument(ctx context.Context, db string, id string) (*document.Document, error) {
 	var resp document.Document
-	if err := c.do(ctx, http.MethodGet, "/v1/databases/"+db+"/documents/"+id, nil, &resp); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/tables/"+db+"/documents/"+id, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -172,19 +172,19 @@ func (c *Client) UpdateDocument(ctx context.Context, db string, id string, doc *
 	}
 
 	var resp document.Document
-	if err := c.do(ctx, http.MethodPut, "/v1/databases/"+db+"/documents/"+id, body, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPut, "/v1/tables/"+db+"/documents/"+id, body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
 func (c *Client) DeleteDocument(ctx context.Context, db string, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/databases/"+db+"/documents/"+id, nil, nil)
+	return c.do(ctx, http.MethodDelete, "/v1/tables/"+db+"/documents/"+id, nil, nil)
 }
 
 func (c *Client) BulkCreateDocuments(ctx context.Context, db string, docs []*document.Document) (*cli.BulkResult, error) {
 	var resp cli.BulkResult
-	if err := c.do(ctx, http.MethodPost, "/v1/databases/"+db+"/documents/_bulk", docs, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/tables/"+db+"/documents/_bulk", docs, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -198,7 +198,7 @@ func (c *Client) SearchText(ctx context.Context, db string, query string, limit,
 	}{Query: query, Limit: limit, Offset: offset}
 
 	var resp cli.TextSearchResult
-	if err := c.do(ctx, http.MethodPost, "/v1/databases/"+db+"/search/text", body, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/tables/"+db+"/search/text", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -211,7 +211,7 @@ func (c *Client) SearchVector(ctx context.Context, db string, query string, k in
 	}{Query: query, K: k}
 
 	var resp []*document.Document
-	if err := c.do(ctx, http.MethodPost, "/v1/databases/"+db+"/search/vector", body, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/tables/"+db+"/search/vector", body, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -225,7 +225,7 @@ func (c *Client) SearchAttributes(ctx context.Context, db string, filters []inde
 	}{Filters: filters, Limit: limit, Offset: offset}
 
 	var resp []*document.Document
-	if err := c.do(ctx, http.MethodPost, "/v1/databases/"+db+"/search/attributes", body, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/tables/"+db+"/search/attributes", body, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil

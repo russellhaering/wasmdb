@@ -18,8 +18,8 @@ import (
 
 var (
 	baseURL   = flag.String("url", "http://localhost:8080", "WasmDB base URL")
-	dbName    = flag.String("db", "bench", "database name to use")
-	cleanup   = flag.Bool("cleanup", true, "delete database after benchmarks")
+	dbName    = flag.String("db", "bench", "table name to use")
+	cleanup   = flag.Bool("cleanup", true, "delete table after benchmarks")
 	benchmarks = flag.String("bench", "1,2,3,4,5,6,7", "comma-separated benchmark numbers to run")
 )
 
@@ -33,7 +33,7 @@ type document struct {
 	Version    uint64         `json:"version,omitempty"`
 }
 
-type createDBRequest struct {
+type createTableRequest struct {
 	Name   string `json:"name"`
 	Schema *schema `json:"schema,omitempty"`
 }
@@ -186,9 +186,9 @@ func main() {
 
 	fmt.Printf("WasmDB Benchmark Suite\n")
 	fmt.Printf("Target: %s\n", *baseURL)
-	fmt.Printf("Database: %s\n\n", *dbName)
+	fmt.Printf("Table: %s\n\n", *dbName)
 
-	// Setup: create database with schema.
+	// Setup: create table with schema.
 	setupDB()
 	if *cleanup {
 		defer cleanupDB()
@@ -228,12 +228,12 @@ func main() {
 
 func setupDB() {
 	// Delete if exists (ignore errors).
-	resp, _ := doJSON("DELETE", *baseURL+"/v1/databases/"+*dbName, nil)
+	resp, _ := doJSON("DELETE", *baseURL+"/v1/tables/"+*dbName, nil)
 	if resp != nil {
 		resp.Body.Close()
 	}
 
-	resp = mustDoJSON("POST", *baseURL+"/v1/databases", createDBRequest{
+	resp = mustDoJSON("POST", *baseURL+"/v1/tables", createTableRequest{
 		Name: *dbName,
 		Schema: &schema{
 			Fields: []fieldDef{
@@ -245,17 +245,17 @@ func setupDB() {
 	})
 	body := readBody(resp)
 	if resp.StatusCode != 201 {
-		fmt.Fprintf(os.Stderr, "Failed to create database: %s\n", body)
+		fmt.Fprintf(os.Stderr, "Failed to create table: %s\n", body)
 		os.Exit(1)
 	}
-	fmt.Printf("Created database %q\n\n", *dbName)
+	fmt.Printf("Created table %q\n\n", *dbName)
 }
 
 func cleanupDB() {
-	resp, _ := doJSON("DELETE", *baseURL+"/v1/databases/"+*dbName, nil)
+	resp, _ := doJSON("DELETE", *baseURL+"/v1/tables/"+*dbName, nil)
 	if resp != nil {
 		resp.Body.Close()
-		fmt.Printf("\nCleaned up database %q\n", *dbName)
+		fmt.Printf("\nCleaned up table %q\n", *dbName)
 	}
 }
 
@@ -271,7 +271,7 @@ func bench1SerialWrite() []string {
 	for range n {
 		doc := generateDoc()
 		t := time.Now()
-		resp := mustDoJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/documents", doc)
+		resp := mustDoJSON("POST", *baseURL+"/v1/tables/"+*dbName+"/documents", doc)
 		elapsed := time.Since(t)
 		body := readBody(resp)
 		if resp.StatusCode != 201 {
@@ -322,7 +322,7 @@ func bench2ConcurrentWrite() []string {
 		wg.Go(func() {
 			for doc := range work {
 				t := time.Now()
-				resp := mustDoJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/documents", doc)
+				resp := mustDoJSON("POST", *baseURL+"/v1/tables/"+*dbName+"/documents", doc)
 				elapsed := time.Since(t)
 				body := readBody(resp)
 
@@ -417,7 +417,7 @@ func bench4AttributeSearch() {
 
 		for range iterations {
 			t := time.Now()
-			resp := mustDoJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/search/attributes", searchRequest{
+			resp := mustDoJSON("POST", *baseURL+"/v1/tables/"+*dbName+"/search/attributes", searchRequest{
 				Filters: q.filters,
 				Limit:   100,
 				Offset:  0,
@@ -465,7 +465,7 @@ func bench5TextSearch() {
 
 		for range iterations {
 			t := time.Now()
-			resp, err := doJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/search/text", textSearchRequest{
+			resp, err := doJSON("POST", *baseURL+"/v1/tables/"+*dbName+"/search/text", textSearchRequest{
 				Query:  q,
 				Limit:  10,
 				Offset: 0,
@@ -511,7 +511,7 @@ func bench6WriteReadConsistency() {
 
 		// Write.
 		t := time.Now()
-		resp := mustDoJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/documents", doc)
+		resp := mustDoJSON("POST", *baseURL+"/v1/tables/"+*dbName+"/documents", doc)
 		body := readBody(resp)
 		if resp.StatusCode != 201 {
 			fmt.Fprintf(os.Stderr, "  Write failed [%d]: %s\n", resp.StatusCode, body)
@@ -596,7 +596,7 @@ func bench7MillionRecords() {
 					docs[j] = generateDoc()
 				}
 
-				resp, err := doJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/documents/_bulk", docs)
+				resp, err := doJSON("POST", *baseURL+"/v1/tables/"+*dbName+"/documents/_bulk", docs)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "  Bulk request error: %v\n", err)
 					bulkErrors.Add(1)
@@ -655,7 +655,7 @@ func bench7MillionRecords() {
 
 		for range iterations {
 			t := time.Now()
-			resp := mustDoJSON("POST", *baseURL+"/v1/databases/"+*dbName+"/search/attributes", searchRequest{
+			resp := mustDoJSON("POST", *baseURL+"/v1/tables/"+*dbName+"/search/attributes", searchRequest{
 				Filters: q.filters,
 				Limit:   100,
 				Offset:  0,

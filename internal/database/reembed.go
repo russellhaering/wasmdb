@@ -10,7 +10,7 @@ import (
 
 // reembedJob re-embeds documents in the background when the embedding model changes.
 type reembedJob struct {
-	db    *Database
+	db    *Table
 	model string
 }
 
