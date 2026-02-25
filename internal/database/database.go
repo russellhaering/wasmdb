@@ -23,9 +23,10 @@ type indexOp struct {
 	delete string            // non-empty for deletes
 }
 
-// Database ties together storage, indexes, and embeddings for a single database.
-type Database struct {
+// Table ties together storage, indexes, and embeddings for a single table.
+type Table struct {
 	Name   string
+	System bool
 	Schema *document.Schema
 
 	db       *lsm.DB
@@ -46,17 +47,18 @@ type Database struct {
 	reembedWg     sync.WaitGroup
 }
 
-// DatabaseConfig configures a database instance.
-type DatabaseConfig struct {
+// TableConfig configures a table instance.
+type TableConfig struct {
 	Name     string
+	System   bool
 	Schema   *document.Schema
 	DB       *lsm.DB
 	CacheDir string
 	Embedder *embedding.Pipeline
 }
 
-// NewDatabase creates a new Database, initializing indexes and the builder.
-func NewDatabase(cfg DatabaseConfig) (*Database, error) {
+// NewTable creates a new Table, initializing indexes and the builder.
+func NewTable(cfg TableConfig) (*Table, error) {
 	// Create attribute index (always available).
 	attrs := index.NewAttributeIndex()
 
@@ -80,8 +82,9 @@ func NewDatabase(cfg DatabaseConfig) (*Database, error) {
 		}
 	}
 
-	d := &Database{
+	d := &Table{
 		Name:     cfg.Name,
+		System:   cfg.System,
 		Schema:   cfg.Schema,
 		db:       cfg.DB,
 		cacheDir: cfg.CacheDir,
@@ -111,7 +114,7 @@ func NewDatabase(cfg DatabaseConfig) (*Database, error) {
 }
 
 // PutDocument validates, embeds, serializes, and stores a document.
-func (d *Database) PutDocument(ctx context.Context, doc *document.Document) error {
+func (d *Table) PutDocument(ctx context.Context, doc *document.Document) error {
 	// Validate schema.
 	if d.Schema != nil && len(doc.Attributes) > 0 {
 		if err := d.Schema.Validate(doc.Attributes); err != nil {
@@ -189,7 +192,7 @@ func (d *Database) PutDocument(ctx context.Context, doc *document.Document) erro
 }
 
 // PutDocumentsBulk validates, serializes, and stores multiple documents with a single flush.
-func (d *Database) PutDocumentsBulk(ctx context.Context, docs []*document.Document) error {
+func (d *Table) PutDocumentsBulk(ctx context.Context, docs []*document.Document) error {
 	now := time.Now().UTC()
 
 	for _, doc := range docs {
@@ -239,7 +242,7 @@ func (d *Database) PutDocumentsBulk(ctx context.Context, docs []*document.Docume
 }
 
 // GetDocument retrieves a document by ID.
-func (d *Database) GetDocument(ctx context.Context, id string) (*document.Document, error) {
+func (d *Table) GetDocument(ctx context.Context, id string) (*document.Document, error) {
 	entry, ok, err := d.db.Get(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err)
@@ -260,7 +263,7 @@ func (d *Database) GetDocument(ctx context.Context, id string) (*document.Docume
 }
 
 // DeleteDocument deletes a document by ID.
-func (d *Database) DeleteDocument(ctx context.Context, id string) error {
+func (d *Table) DeleteDocument(ctx context.Context, id string) error {
 	if _, err := d.db.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete: %w", err)
 	}
@@ -272,7 +275,7 @@ func (d *Database) DeleteDocument(ctx context.Context, id string) error {
 }
 
 // indexDocument enqueues a document for async indexing.
-func (d *Database) indexDocument(doc *document.Document) {
+func (d *Table) indexDocument(doc *document.Document) {
 	d.mu.RLock()
 	ch := d.indexCh
 	d.mu.RUnlock()
@@ -280,7 +283,7 @@ func (d *Database) indexDocument(doc *document.Document) {
 }
 
 // deindexDocument enqueues a document removal for async indexing.
-func (d *Database) deindexDocument(id string) {
+func (d *Table) deindexDocument(id string) {
 	d.mu.RLock()
 	ch := d.indexCh
 	d.mu.RUnlock()
@@ -288,7 +291,7 @@ func (d *Database) deindexDocument(id string) {
 }
 
 // indexWorker drains the index channel and applies operations.
-func (d *Database) indexWorker() {
+func (d *Table) indexWorker() {
 	defer d.indexWg.Done()
 	for op := range d.indexCh {
 		if op.delete != "" {
@@ -319,7 +322,7 @@ func (d *Database) indexWorker() {
 }
 
 // SearchVector performs a vector similarity search.
-func (d *Database) SearchVector(ctx context.Context, query []float32, k int) ([]*document.Document, error) {
+func (d *Table) SearchVector(ctx context.Context, query []float32, k int) ([]*document.Document, error) {
 	d.mu.RLock()
 	v := d.vector
 	d.mu.RUnlock()
@@ -337,7 +340,7 @@ func (d *Database) SearchVector(ctx context.Context, query []float32, k int) ([]
 }
 
 // SearchVectorByText embeds the query text and performs vector search.
-func (d *Database) SearchVectorByText(ctx context.Context, queryText string, k int) ([]*document.Document, error) {
+func (d *Table) SearchVectorByText(ctx context.Context, queryText string, k int) ([]*document.Document, error) {
 	if d.embedder == nil {
 		return nil, fmt.Errorf("embedding not configured")
 	}
@@ -351,7 +354,7 @@ func (d *Database) SearchVectorByText(ctx context.Context, queryText string, k i
 }
 
 // SearchText performs a full-text search.
-func (d *Database) SearchText(ctx context.Context, query string, limit, offset int) ([]*document.Document, int, error) {
+func (d *Table) SearchText(ctx context.Context, query string, limit, offset int) ([]*document.Document, int, error) {
 	d.mu.RLock()
 	b := d.bleve
 	d.mu.RUnlock()
@@ -375,7 +378,7 @@ func (d *Database) SearchText(ctx context.Context, query string, limit, offset i
 }
 
 // SearchAttributes performs an attribute filter search.
-func (d *Database) SearchAttributes(ctx context.Context, filters []index.Filter, limit, offset int) ([]*document.Document, error) {
+func (d *Table) SearchAttributes(ctx context.Context, filters []index.Filter, limit, offset int) ([]*document.Document, error) {
 	d.mu.RLock()
 	a := d.attrs
 	d.mu.RUnlock()
@@ -395,7 +398,35 @@ func (d *Database) SearchAttributes(ctx context.Context, filters []index.Filter,
 	return d.fetchDocs(ctx, ids)
 }
 
-func (d *Database) fetchDocs(ctx context.Context, ids []string) ([]*document.Document, error) {
+// ListDocuments returns up to limit documents starting at offset, scanning the LSM directly.
+func (d *Table) ListDocuments(ctx context.Context, limit, offset int) ([]*document.Document, int, error) {
+	entries, err := d.db.Scan(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("scan: %w", err)
+	}
+
+	// Filter to non-tombstone entries with valid documents.
+	total := 0
+	var docs []*document.Document
+	for _, entry := range entries {
+		if entry.Value == nil {
+			continue
+		}
+		if total >= offset && len(docs) < limit {
+			doc, err := document.Deserialize(entry.Value)
+			if err != nil {
+				continue
+			}
+			doc.ID = entry.Key
+			docs = append(docs, doc)
+		}
+		total++
+	}
+
+	return docs, total, nil
+}
+
+func (d *Table) fetchDocs(ctx context.Context, ids []string) ([]*document.Document, error) {
 	docs := make([]*document.Document, 0, len(ids))
 	for _, id := range ids {
 		doc, err := d.GetDocument(ctx, id)
@@ -431,7 +462,7 @@ func buildEmbeddingText(doc *document.Document) string {
 }
 
 // stopIndexing stops the builder and drains the index worker without closing the LSM.
-func (d *Database) stopIndexing() {
+func (d *Table) stopIndexing() {
 	if d.builder != nil {
 		d.builder.Close()
 		d.builder = nil
@@ -440,8 +471,8 @@ func (d *Database) stopIndexing() {
 	d.indexWg.Wait()
 }
 
-// Close shuts down the database and its indexes.
-func (d *Database) Close() error {
+// Close shuts down the table and its indexes.
+func (d *Table) Close() error {
 	// Cancel any active re-embed job.
 	if d.reembedCancel != nil {
 		d.reembedCancel()
@@ -456,7 +487,7 @@ func (d *Database) Close() error {
 }
 
 // RebuildIndexes detects schema changes and rebuilds affected indexes.
-func (d *Database) RebuildIndexes(ctx context.Context, oldSchema, newSchema *document.Schema) error {
+func (d *Table) RebuildIndexes(ctx context.Context, oldSchema, newSchema *document.Schema) error {
 	changes := document.DiffSchemas(oldSchema, newSchema)
 	if !changes.Changed() {
 		d.Schema = newSchema

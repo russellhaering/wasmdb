@@ -43,11 +43,12 @@ var schemaType = graphql.NewObject(graphql.ObjectConfig{
 	},
 })
 
-var databaseInfoType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "DatabaseInfo",
+var tableInfoType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "TableInfo",
 	Fields: graphql.Fields{
 		"name":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 		"schema":    &graphql.Field{Type: schemaType},
+		"system":    &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
 		"createdAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 	},
 })
@@ -86,8 +87,8 @@ var jsonScalar = graphql.NewScalar(graphql.ScalarConfig{
 	},
 })
 
-// baseDocumentFields returns the common document fields shared across all databases.
-// The returned map can be extended with per-database attribute fields.
+// baseDocumentFields returns the common document fields shared across all tables.
+// The returned map can be extended with per-table attribute fields.
 func baseDocumentFields() graphql.Fields {
 	return graphql.Fields{
 		"id":         &graphql.Field{Type: graphql.NewNonNull(graphql.String)},

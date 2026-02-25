@@ -15,17 +15,24 @@ import (
 	"github.com/russellhaering/wasmdb/internal/storage/objstore"
 )
 
-// DatabaseMeta holds persistent metadata about a database.
-type DatabaseMeta struct {
+// TableMeta holds persistent metadata about a table.
+type TableMeta struct {
 	Name      string           `json:"name"`
 	Schema    *document.Schema `json:"schema,omitempty"`
+	System    bool             `json:"system,omitempty"`
 	CreatedAt time.Time        `json:"created_at"`
 }
 
-// Registry manages multiple databases.
+// SystemTableDef defines a system table to be auto-created at startup.
+type SystemTableDef struct {
+	Name   string
+	Schema *document.Schema
+}
+
+// Registry manages multiple tables.
 type Registry struct {
-	mu        sync.RWMutex
-	databases map[string]*Database
+	mu     sync.RWMutex
+	tables map[string]*Table
 	store     objstore.ObjectStore
 	prefix    string
 	cacheDir  string
@@ -35,7 +42,7 @@ type Registry struct {
 	memTableMaxSize int64
 	l0CompactThresh int
 
-	// OnSchemaChange is called after databases are created, deleted, or schemas are updated.
+	// OnSchemaChange is called after tables are created, deleted, or schemas are updated.
 	OnSchemaChange func(ctx context.Context)
 }
 
@@ -49,10 +56,10 @@ type RegistryConfig struct {
 	L0CompactThresh int
 }
 
-// NewRegistry creates a new database registry.
+// NewRegistry creates a new table registry.
 func NewRegistry(cfg RegistryConfig) *Registry {
 	return &Registry{
-		databases:       make(map[string]*Database),
+		tables:          make(map[string]*Table),
 		store:           cfg.Store,
 		prefix:          cfg.Prefix,
 		cacheDir:        cfg.CacheDir,
@@ -70,22 +77,22 @@ func (r *Registry) dbPrefix(name string) string {
 	return fmt.Sprintf("%s/databases/%s/data", r.prefix, name)
 }
 
-// CreateDatabase creates a new database.
-func (r *Registry) CreateDatabase(ctx context.Context, name string, schema *document.Schema) (*Database, error) {
+// CreateTable creates a new table.
+func (r *Registry) CreateTable(ctx context.Context, name string, schema *document.Schema) (*Table, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.databases[name]; ok {
-		return nil, fmt.Errorf("database %q already exists", name)
+	if _, ok := r.tables[name]; ok {
+		return nil, fmt.Errorf("table %q already exists", name)
 	}
 
 	// Check if metadata already exists in object store.
 	exists, _ := r.store.Exists(ctx, r.metaPath(name))
 	if exists {
-		return nil, fmt.Errorf("database %q already exists", name)
+		return nil, fmt.Errorf("table %q already exists", name)
 	}
 
-	meta := DatabaseMeta{
+	meta := TableMeta{
 		Name:      name,
 		Schema:    schema,
 		CreatedAt: time.Now().UTC(),
@@ -100,13 +107,13 @@ func (r *Registry) CreateDatabase(ctx context.Context, name string, schema *docu
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	db, err := r.openDatabase(ctx, name, schema)
+	db, err := r.openTable(ctx, name, schema, false)
 	if err != nil {
 		return nil, err
 	}
 
-	r.databases[name] = db
-	slog.Info("database created", "name", name)
+	r.tables[name] = db
+	slog.Info("table created", "name", name)
 
 	if r.OnSchemaChange != nil {
 		r.OnSchemaChange(ctx)
@@ -115,10 +122,10 @@ func (r *Registry) CreateDatabase(ctx context.Context, name string, schema *docu
 	return db, nil
 }
 
-// GetDatabase returns an open database, lazily opening it if needed.
-func (r *Registry) GetDatabase(ctx context.Context, name string) (*Database, error) {
+// GetTable returns an open table, lazily opening it if needed.
+func (r *Registry) GetTable(ctx context.Context, name string) (*Table, error) {
 	r.mu.RLock()
-	if db, ok := r.databases[name]; ok {
+	if db, ok := r.tables[name]; ok {
 		r.mu.RUnlock()
 		return db, nil
 	}
@@ -128,53 +135,53 @@ func (r *Registry) GetDatabase(ctx context.Context, name string) (*Database, err
 	defer r.mu.Unlock()
 
 	// Double-check after acquiring write lock.
-	if db, ok := r.databases[name]; ok {
+	if db, ok := r.tables[name]; ok {
 		return db, nil
 	}
 
 	// Load metadata.
 	metaData, err := r.store.Get(ctx, r.metaPath(name))
 	if err != nil {
-		return nil, fmt.Errorf("database %q not found", name)
+		return nil, fmt.Errorf("table %q not found", name)
 	}
 
-	var meta DatabaseMeta
+	var meta TableMeta
 	if err := json.Unmarshal(metaData, &meta); err != nil {
 		return nil, fmt.Errorf("corrupt metadata for %q: %w", name, err)
 	}
 
-	db, err := r.openDatabase(ctx, name, meta.Schema)
+	db, err := r.openTable(ctx, name, meta.Schema, meta.System)
 	if err != nil {
 		return nil, err
 	}
 
-	r.databases[name] = db
+	r.tables[name] = db
 	return db, nil
 }
 
-// DeleteDatabase deletes a database, its metadata, and all stored data.
-func (r *Registry) DeleteDatabase(ctx context.Context, name string) error {
+// DeleteTable deletes a table, its metadata, and all stored data.
+func (r *Registry) DeleteTable(ctx context.Context, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if db, ok := r.databases[name]; ok {
+	if db, ok := r.tables[name]; ok {
 		db.Close()
-		delete(r.databases, name)
+		delete(r.tables, name)
 	}
 
-	// Delete all objects under the database prefix (LSM data, manifests, WAL).
+	// Delete all objects under the table prefix (LSM data, manifests, WAL).
 	dbPrefix := fmt.Sprintf("%s/databases/%s/", r.prefix, name)
 	keys, err := r.store.List(ctx, dbPrefix)
 	if err != nil {
-		return fmt.Errorf("list database objects: %w", err)
+		return fmt.Errorf("list table objects: %w", err)
 	}
 	for _, key := range keys {
 		if err := r.store.Delete(ctx, key); err != nil {
-			slog.Warn("failed to delete object during database cleanup", "key", key, "err", err)
+			slog.Warn("failed to delete object during table cleanup", "key", key, "err", err)
 		}
 	}
 
-	slog.Info("database deleted", "name", name, "objects_removed", len(keys))
+	slog.Info("table deleted", "name", name, "objects_removed", len(keys))
 
 	if r.OnSchemaChange != nil {
 		r.OnSchemaChange(ctx)
@@ -183,15 +190,15 @@ func (r *Registry) DeleteDatabase(ctx context.Context, name string) error {
 	return nil
 }
 
-// ListDatabases returns metadata for all databases.
-func (r *Registry) ListDatabases(ctx context.Context) ([]DatabaseMeta, error) {
+// ListTables returns metadata for all tables.
+func (r *Registry) ListTables(ctx context.Context) ([]TableMeta, error) {
 	prefix := fmt.Sprintf("%s/databases/", r.prefix)
 	keys, err := r.store.List(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
 
-	var metas []DatabaseMeta
+	var metas []TableMeta
 	for _, key := range keys {
 		// Only process meta.json files.
 		if !strings.HasSuffix(key, "/meta.json") {
@@ -201,7 +208,7 @@ func (r *Registry) ListDatabases(ctx context.Context) ([]DatabaseMeta, error) {
 		if err != nil {
 			continue
 		}
-		var meta DatabaseMeta
+		var meta TableMeta
 		if err := json.Unmarshal(data, &meta); err != nil {
 			continue
 		}
@@ -210,9 +217,9 @@ func (r *Registry) ListDatabases(ctx context.Context) ([]DatabaseMeta, error) {
 	return metas, nil
 }
 
-// UpdateSchema updates a database's schema, rebuilding affected indexes.
+// UpdateSchema updates a table's schema, rebuilding affected indexes.
 func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *document.Schema) error {
-	db, err := r.GetDatabase(ctx, name)
+	db, err := r.GetTable(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -223,7 +230,7 @@ func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *docume
 	}
 
 	// Update persisted metadata.
-	meta := DatabaseMeta{
+	meta := TableMeta{
 		Name:   name,
 		Schema: schema,
 	}
@@ -242,7 +249,7 @@ func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *docume
 	return nil
 }
 
-func (r *Registry) openDatabase(ctx context.Context, name string, schema *document.Schema) (*Database, error) {
+func (r *Registry) openTable(ctx context.Context, name string, schema *document.Schema, system bool) (*Table, error) {
 	dbPrefix := r.dbPrefix(name)
 
 	lsmDB, err := lsm.Open(ctx, lsm.DBConfig{
@@ -256,8 +263,9 @@ func (r *Registry) openDatabase(ctx context.Context, name string, schema *docume
 		return nil, fmt.Errorf("open lsm for %q: %w", name, err)
 	}
 
-	return NewDatabase(DatabaseConfig{
+	return NewTable(TableConfig{
 		Name:     name,
+		System:   system,
 		Schema:   schema,
 		DB:       lsmDB,
 		CacheDir: r.cacheDir,
@@ -265,16 +273,78 @@ func (r *Registry) openDatabase(ctx context.Context, name string, schema *docume
 	})
 }
 
-// Close closes all open databases.
+// EnsureSystemTables creates any system tables that don't already exist.
+// It is idempotent — existing tables are skipped.
+func (r *Registry) EnsureSystemTables(ctx context.Context, defs []SystemTableDef) error {
+	for _, def := range defs {
+		r.mu.Lock()
+		if _, ok := r.tables[def.Name]; ok {
+			r.mu.Unlock()
+			continue
+		}
+
+		// Check if metadata already exists in object store.
+		exists, _ := r.store.Exists(ctx, r.metaPath(def.Name))
+		if exists {
+			r.mu.Unlock()
+			continue
+		}
+
+		meta := TableMeta{
+			Name:      def.Name,
+			Schema:    def.Schema,
+			System:    true,
+			CreatedAt: time.Now().UTC(),
+		}
+
+		data, err := json.Marshal(meta)
+		if err != nil {
+			r.mu.Unlock()
+			return fmt.Errorf("marshal system table %q meta: %w", def.Name, err)
+		}
+
+		if err := r.store.Put(ctx, r.metaPath(def.Name), data, true); err != nil {
+			r.mu.Unlock()
+			return fmt.Errorf("save system table %q metadata: %w", def.Name, err)
+		}
+
+		db, err := r.openTable(ctx, def.Name, def.Schema, true)
+		if err != nil {
+			r.mu.Unlock()
+			return fmt.Errorf("open system table %q: %w", def.Name, err)
+		}
+
+		r.tables[def.Name] = db
+		r.mu.Unlock()
+
+		slog.Info("system table created", "name", def.Name)
+
+		if r.OnSchemaChange != nil {
+			r.OnSchemaChange(ctx)
+		}
+	}
+	return nil
+}
+
+// IsSystemTable returns whether the named table is a system table.
+func (r *Registry) IsSystemTable(ctx context.Context, name string) (bool, error) {
+	table, err := r.GetTable(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	return table.System, nil
+}
+
+// Close closes all open tables.
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for name, db := range r.databases {
+	for name, db := range r.tables {
 		if err := db.Close(); err != nil {
-			slog.Error("error closing database", "name", name, "err", err)
+			slog.Error("error closing table", "name", name, "err", err)
 		}
 	}
-	r.databases = make(map[string]*Database)
+	r.tables = make(map[string]*Table)
 	return nil
 }

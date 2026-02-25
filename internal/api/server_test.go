@@ -48,10 +48,10 @@ func authedRequest(t *testing.T, method, path string, body []byte) *http.Request
 	return req
 }
 
-func TestCreateAndGetDatabase(t *testing.T) {
+func TestCreateAndGetTable(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create database.
+	// Create table.
 	body, _ := json.Marshal(map[string]any{
 		"name": "testdb",
 		"schema": map[string]any{
@@ -62,21 +62,21 @@ func TestCreateAndGetDatabase(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/databases", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables", body))
 
 	if w.Code != 201 {
 		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Get database.
+	// Get table.
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/databases/testdb", nil))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/tables/testdb", nil))
 
 	if w.Code != 200 {
 		t.Fatalf("get: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp databaseResponse
+	var resp tableResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp.Name != "testdb" {
 		t.Fatalf("expected name testdb, got %s", resp.Name)
@@ -86,15 +86,15 @@ func TestCreateAndGetDatabase(t *testing.T) {
 func TestDocumentCRUD(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create database.
+	// Create table.
 	body, _ := json.Marshal(map[string]any{"name": "docs"})
 	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/databases", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables", body))
 	if w.Code != 201 {
-		t.Fatalf("create db: %d: %s", w.Code, w.Body.String())
+		t.Fatalf("create table: %d: %s", w.Code, w.Body.String())
 	}
 
-	// Wait for the database to be ready.
+	// Wait for the table to be ready.
 	time.Sleep(100 * time.Millisecond)
 
 	// Create document.
@@ -103,14 +103,14 @@ func TestDocumentCRUD(t *testing.T) {
 		"content": "# Hello World",
 	})
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/databases/docs/documents", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables/docs/documents", body))
 	if w.Code != 201 {
 		t.Fatalf("create doc: %d: %s", w.Code, w.Body.String())
 	}
 
 	// Get document.
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/databases/docs/documents/doc-1", nil))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/tables/docs/documents/doc-1", nil))
 	if w.Code != 200 {
 		t.Fatalf("get doc: %d: %s", w.Code, w.Body.String())
 	}
@@ -129,14 +129,14 @@ func TestDocumentCRUD(t *testing.T) {
 		"content": "# Updated",
 	})
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "PUT", "/v1/databases/docs/documents/doc-1", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "PUT", "/v1/tables/docs/documents/doc-1", body))
 	if w.Code != 200 {
 		t.Fatalf("update doc: %d: %s", w.Code, w.Body.String())
 	}
 
 	// Verify update.
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/databases/docs/documents/doc-1", nil))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/tables/docs/documents/doc-1", nil))
 	json.Unmarshal(w.Body.Bytes(), &doc)
 	if doc.Content != "# Updated" {
 		t.Fatalf("expected '# Updated', got %q", doc.Content)
@@ -144,35 +144,35 @@ func TestDocumentCRUD(t *testing.T) {
 
 	// Delete document.
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "DELETE", "/v1/databases/docs/documents/doc-1", nil))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "DELETE", "/v1/tables/docs/documents/doc-1", nil))
 	if w.Code != 204 {
 		t.Fatalf("delete doc: %d: %s", w.Code, w.Body.String())
 	}
 
 	// Verify deleted.
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/databases/docs/documents/doc-1", nil))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/tables/docs/documents/doc-1", nil))
 	if w.Code != 404 {
 		t.Fatalf("expected 404 after delete, got %d", w.Code)
 	}
 }
 
-func TestListDatabases(t *testing.T) {
+func TestListTables(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create two databases.
+	// Create two tables.
 	for _, name := range []string{"db1", "db2"} {
 		body, _ := json.Marshal(map[string]any{"name": name})
 		w := httptest.NewRecorder()
-		srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/databases", body))
+		srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables", body))
 		if w.Code != 201 {
 			t.Fatalf("create %s: %d", name, w.Code)
 		}
 	}
 
-	// List databases.
+	// List tables.
 	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/databases", nil))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/tables", nil))
 	if w.Code != 200 {
 		t.Fatalf("list: %d: %s", w.Code, w.Body.String())
 	}
@@ -180,7 +180,7 @@ func TestListDatabases(t *testing.T) {
 	var list []map[string]string
 	json.Unmarshal(w.Body.Bytes(), &list)
 	if len(list) != 2 {
-		t.Fatalf("expected 2 databases, got %d", len(list))
+		t.Fatalf("expected 2 tables, got %d", len(list))
 	}
 }
 
@@ -197,19 +197,19 @@ func TestHealthEndpoints(t *testing.T) {
 	}
 }
 
-func TestDuplicateDatabase(t *testing.T) {
+func TestDuplicateTable(t *testing.T) {
 	srv := setupTestServer(t)
 
 	body, _ := json.Marshal(map[string]any{"name": "dup"})
 
 	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/databases", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables", body))
 	if w.Code != 201 {
 		t.Fatalf("first create: %d", w.Code)
 	}
 
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/databases", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables", body))
 	if w.Code != 409 {
 		t.Fatalf("expected 409 for duplicate, got %d: %s", w.Code, w.Body.String())
 	}
@@ -218,7 +218,7 @@ func TestDuplicateDatabase(t *testing.T) {
 func TestSchemaEndpoints(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Create database with schema.
+	// Create table with schema.
 	body, _ := json.Marshal(map[string]any{
 		"name": "schemadb",
 		"schema": map[string]any{
@@ -228,14 +228,14 @@ func TestSchemaEndpoints(t *testing.T) {
 		},
 	})
 	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/databases", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables", body))
 	if w.Code != 201 {
 		t.Fatalf("create: %d: %s", w.Code, w.Body.String())
 	}
 
 	// Get schema.
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/databases/schemadb/schema", nil))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/tables/schemadb/schema", nil))
 	if w.Code != 200 {
 		t.Fatalf("get schema: %d: %s", w.Code, w.Body.String())
 	}
@@ -248,7 +248,7 @@ func TestSchemaEndpoints(t *testing.T) {
 		},
 	})
 	w = httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "PUT", "/v1/databases/schemadb/schema", body))
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "PUT", "/v1/tables/schemadb/schema", body))
 	if w.Code != 200 {
 		t.Fatalf("update schema: %d: %s", w.Code, w.Body.String())
 	}
@@ -257,7 +257,7 @@ func TestSchemaEndpoints(t *testing.T) {
 func TestAuthRejectsNoToken(t *testing.T) {
 	srv := setupTestServer(t)
 
-	req := httptest.NewRequest("GET", "/v1/databases", nil)
+	req := httptest.NewRequest("GET", "/v1/tables", nil)
 	w := httptest.NewRecorder()
 	srv.httpServer.Handler.ServeHTTP(w, req)
 
@@ -275,7 +275,7 @@ func TestAuthRejectsNoToken(t *testing.T) {
 func TestAuthRejectsWrongToken(t *testing.T) {
 	srv := setupTestServer(t)
 
-	req := httptest.NewRequest("GET", "/v1/databases", nil)
+	req := httptest.NewRequest("GET", "/v1/tables", nil)
 	req.Header.Set("Authorization", "Bearer wrong-token")
 	w := httptest.NewRecorder()
 	srv.httpServer.Handler.ServeHTTP(w, req)
@@ -295,6 +295,49 @@ func TestAuthAllowsHealthChecksWithoutToken(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("%s: expected 200 without token, got %d", path, w.Code)
 		}
+	}
+}
+
+func TestDeleteSystemTableForbidden(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create a system table directly via the registry.
+	err := srv.registry.EnsureSystemTables(context.Background(), []database.SystemTableDef{
+		{Name: "_sys_protected"},
+	})
+	if err != nil {
+		t.Fatalf("EnsureSystemTables: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "DELETE", "/v1/tables/_sys_protected", nil))
+
+	if w.Code != 403 {
+		t.Fatalf("expected 403 for system table delete, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdateSystemTableSchemaForbidden(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create a system table directly via the registry.
+	err := srv.registry.EnsureSystemTables(context.Background(), []database.SystemTableDef{
+		{Name: "_sys_locked"},
+	})
+	if err != nil {
+		t.Fatalf("EnsureSystemTables: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"fields": []map[string]any{
+			{"name": "foo", "type": "string"},
+		},
+	})
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "PUT", "/v1/tables/_sys_locked/schema", body))
+
+	if w.Code != 403 {
+		t.Fatalf("expected 403 for system table schema update, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -7,24 +7,34 @@ import (
 )
 
 func (s *Server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
 
-	db, err := s.registry.GetDatabase(r.Context(), dbName)
+	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
-		writeErrorMsg(w, 404, "not_found", "database not found: "+dbName)
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
 		return
 	}
 
-	if db.Schema == nil {
+	if table.Schema == nil {
 		writeJSON(w, 200, &document.Schema{})
 		return
 	}
 
-	writeJSON(w, 200, db.Schema)
+	writeJSON(w, 200, table.Schema)
 }
 
 func (s *Server) handleUpdateSchema(w http.ResponseWriter, r *http.Request) {
-	dbName := r.PathValue("db")
+	tableName := r.PathValue("table")
+
+	isSystem, err := s.registry.IsSystemTable(r.Context(), tableName)
+	if err != nil {
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
+		return
+	}
+	if isSystem {
+		writeErrorMsg(w, 403, "forbidden", "cannot modify schema of system table")
+		return
+	}
 
 	var schema document.Schema
 	if err := decodeJSON(r, &schema); err != nil {
@@ -32,7 +42,7 @@ func (s *Server) handleUpdateSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.registry.UpdateSchema(r.Context(), dbName, &schema); err != nil {
+	if err := s.registry.UpdateSchema(r.Context(), tableName, &schema); err != nil {
 		writeErrorMsg(w, 500, "internal_error", err.Error())
 		return
 	}

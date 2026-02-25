@@ -62,11 +62,18 @@ func main() {
 	})
 	defer registry.Close()
 
+	// Ensure system tables exist (no-op with nil defs; future PRs populate this).
+	if err := registry.EnsureSystemTables(ctx, nil); err != nil {
+		slog.Error("failed to ensure system tables", "err", err)
+		os.Exit(1)
+	}
+
 	// Start API server.
 	srv, err := api.NewServer(ctx, api.ServerConfig{
-		ListenAddr: cfg.ListenAddr,
-		Registry:   registry,
-		APITokens:  cfg.APITokens,
+		ListenAddr:      cfg.ListenAddr,
+		Registry:        registry,
+		APITokens:       cfg.APITokens,
+		AnthropicAPIKey: cfg.AnthropicAPIKey,
 	})
 	if err != nil {
 		slog.Error("failed to create server", "err", err)

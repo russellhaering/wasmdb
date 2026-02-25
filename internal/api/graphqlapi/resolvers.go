@@ -30,10 +30,11 @@ func documentToMap(doc *document.Document) map[string]any {
 	return m
 }
 
-// databaseMetaToMap converts a DatabaseMeta to a map for GraphQL resolution.
-func databaseMetaToMap(meta database.DatabaseMeta) map[string]any {
+// tableMetaToMap converts a TableMeta to a map for GraphQL resolution.
+func tableMetaToMap(meta database.TableMeta) map[string]any {
 	m := map[string]any{
 		"name":      meta.Name,
+		"system":    meta.System,
 		"createdAt": meta.CreatedAt.Format(time.RFC3339),
 	}
 	if meta.Schema != nil {
@@ -61,34 +62,34 @@ func schemaToMap(s *document.Schema) map[string]any {
 	}
 }
 
-func resolveListDatabases(registry *database.Registry) graphql.FieldResolveFn {
+func resolveListTables(registry *database.Registry) graphql.FieldResolveFn {
 	return func(p graphql.ResolveParams) (any, error) {
-		metas, err := registry.ListDatabases(p.Context)
+		metas, err := registry.ListTables(p.Context)
 		if err != nil {
 			return nil, err
 		}
 		result := make([]map[string]any, len(metas))
 		for i, m := range metas {
-			result[i] = databaseMetaToMap(m)
+			result[i] = tableMetaToMap(m)
 		}
 		return result, nil
 	}
 }
 
-func resolveGetDatabase(registry *database.Registry) graphql.FieldResolveFn {
+func resolveGetTable(registry *database.Registry) graphql.FieldResolveFn {
 	return func(p graphql.ResolveParams) (any, error) {
 		name, _ := p.Args["name"].(string)
 		if name == "" {
 			return nil, fmt.Errorf("name is required")
 		}
 
-		metas, err := registry.ListDatabases(p.Context)
+		metas, err := registry.ListTables(p.Context)
 		if err != nil {
 			return nil, err
 		}
 		for _, m := range metas {
 			if m.Name == name {
-				return databaseMetaToMap(m), nil
+				return tableMetaToMap(m), nil
 			}
 		}
 		return nil, nil
@@ -102,7 +103,7 @@ func resolveGetDocument(registry *database.Registry, dbName string) graphql.Fiel
 			return nil, fmt.Errorf("id is required")
 		}
 
-		db, err := registry.GetDatabase(p.Context, dbName)
+		db, err := registry.GetTable(p.Context, dbName)
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +129,7 @@ func resolveSearchText(registry *database.Registry, dbName string) graphql.Field
 			limit = 10
 		}
 
-		db, err := registry.GetDatabase(p.Context, dbName)
+		db, err := registry.GetTable(p.Context, dbName)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +159,7 @@ func resolveSearchVector(registry *database.Registry, dbName string) graphql.Fie
 			k = 10
 		}
 
-		db, err := registry.GetDatabase(p.Context, dbName)
+		db, err := registry.GetTable(p.Context, dbName)
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +204,7 @@ func resolveSearchAttributes(registry *database.Registry, dbName string) graphql
 			})
 		}
 
-		db, err := registry.GetDatabase(p.Context, dbName)
+		db, err := registry.GetTable(p.Context, dbName)
 		if err != nil {
 			return nil, err
 		}

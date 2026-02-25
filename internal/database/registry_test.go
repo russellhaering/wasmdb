@@ -19,40 +19,40 @@ func newTestRegistry(t *testing.T) *Registry {
 	})
 }
 
-// TestRegistryConcurrentGetDatabase verifies that multiple goroutines calling
-// GetDatabase for the same name all get the same instance and only one DB is opened.
-func TestRegistryConcurrentGetDatabase(t *testing.T) {
+// TestRegistryConcurrentGetTable verifies that multiple goroutines calling
+// GetTable for the same name all get the same instance and only one DB is opened.
+func TestRegistryConcurrentGetTable(t *testing.T) {
 	reg := newTestRegistry(t)
 	defer reg.Close()
 
 	ctx := context.Background()
 
-	// Create a database first.
-	_, err := reg.CreateDatabase(ctx, "mydb", &document.Schema{
+	// Create a table first.
+	_, err := reg.CreateTable(ctx, "mydb", &document.Schema{
 		Fields: []document.FieldDefinition{{Name: "x", Type: document.FieldTypeString}},
 	})
 	if err != nil {
-		t.Fatalf("CreateDatabase: %v", err)
+		t.Fatalf("CreateTable: %v", err)
 	}
 
-	// Close and clear the in-memory cache so GetDatabase has to load from store.
+	// Close and clear the in-memory cache so GetTable has to load from store.
 	reg.mu.Lock()
-	if db, ok := reg.databases["mydb"]; ok {
+	if db, ok := reg.tables["mydb"]; ok {
 		db.Close()
-		delete(reg.databases, "mydb")
+		delete(reg.tables, "mydb")
 	}
 	reg.mu.Unlock()
 
 	const goroutines = 20
 	var wg sync.WaitGroup
-	results := make([]*Database, goroutines)
+	results := make([]*Table, goroutines)
 	errs := make([]error, goroutines)
 
 	for i := range goroutines {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			db, err := reg.GetDatabase(ctx, "mydb")
+			db, err := reg.GetTable(ctx, "mydb")
 			results[n] = db
 			errs[n] = err
 		}(i)
@@ -63,7 +63,7 @@ func TestRegistryConcurrentGetDatabase(t *testing.T) {
 	// All should succeed.
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("goroutine %d: GetDatabase failed: %v", i, err)
+			t.Fatalf("goroutine %d: GetTable failed: %v", i, err)
 		}
 	}
 
@@ -76,22 +76,22 @@ func TestRegistryConcurrentGetDatabase(t *testing.T) {
 	}
 }
 
-// TestRegistryCreateDatabaseDuplicateName verifies that creating a database
+// TestRegistryCreateTableDuplicateName verifies that creating a table
 // with a duplicate name returns an error.
-func TestRegistryCreateDatabaseDuplicateName(t *testing.T) {
+func TestRegistryCreateTableDuplicateName(t *testing.T) {
 	reg := newTestRegistry(t)
 	defer reg.Close()
 
 	ctx := context.Background()
 
-	_, err := reg.CreateDatabase(ctx, "dup", nil)
+	_, err := reg.CreateTable(ctx, "dup", nil)
 	if err != nil {
-		t.Fatalf("CreateDatabase first: %v", err)
+		t.Fatalf("CreateTable first: %v", err)
 	}
 
-	_, err = reg.CreateDatabase(ctx, "dup", nil)
+	_, err = reg.CreateTable(ctx, "dup", nil)
 	if err == nil {
-		t.Fatal("expected error on duplicate CreateDatabase")
+		t.Fatal("expected error on duplicate CreateTable")
 	}
 }
 
@@ -103,70 +103,70 @@ func TestRegistryCreateAndDeleteConcurrent(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create databases sequentially first.
+	// Create tables sequentially first.
 	for i := range 10 {
 		name := dbName(i)
-		reg.CreateDatabase(ctx, name, nil)
+		reg.CreateTable(ctx, name, nil)
 	}
 
 	var wg sync.WaitGroup
 
-	// Concurrently delete even-numbered databases and get odd-numbered ones.
+	// Concurrently delete even-numbered tables and get odd-numbered ones.
 	for i := range 10 {
 		wg.Add(1)
 		if i%2 == 0 {
 			go func(n int) {
 				defer wg.Done()
-				reg.DeleteDatabase(ctx, dbName(n))
+				reg.DeleteTable(ctx, dbName(n))
 			}(i)
 		} else {
 			go func(n int) {
 				defer wg.Done()
-				reg.GetDatabase(ctx, dbName(n))
+				reg.GetTable(ctx, dbName(n))
 			}(i)
 		}
 	}
 
 	wg.Wait()
 
-	// Odd-numbered databases should still be accessible.
+	// Odd-numbered tables should still be accessible.
 	for i := 1; i < 10; i += 2 {
-		_, err := reg.GetDatabase(ctx, dbName(i))
+		_, err := reg.GetTable(ctx, dbName(i))
 		if err != nil {
-			t.Fatalf("GetDatabase(%s) after concurrent ops: %v", dbName(i), err)
+			t.Fatalf("GetTable(%s) after concurrent ops: %v", dbName(i), err)
 		}
 	}
 }
 
-// TestRegistryGetNonexistentDatabase verifies that getting a database that
+// TestRegistryGetNonexistentTable verifies that getting a table that
 // doesn't exist returns an error.
-func TestRegistryGetNonexistentDatabase(t *testing.T) {
+func TestRegistryGetNonexistentTable(t *testing.T) {
 	reg := newTestRegistry(t)
 	defer reg.Close()
 
-	_, err := reg.GetDatabase(context.Background(), "nope")
+	_, err := reg.GetTable(context.Background(), "nope")
 	if err == nil {
-		t.Fatal("expected error for nonexistent database")
+		t.Fatal("expected error for nonexistent table")
 	}
 }
 
-// TestRegistryListDatabases verifies that ListDatabases returns all created databases.
-func TestRegistryListDatabases(t *testing.T) {
+// TestRegistryListTables verifies that ListTables returns all created tables.
+func TestRegistryListTables(t *testing.T) {
 	reg := newTestRegistry(t)
 	defer reg.Close()
 
 	ctx := context.Background()
 
-	reg.CreateDatabase(ctx, "db-a", nil)
-	reg.CreateDatabase(ctx, "db-b", nil)
-	reg.CreateDatabase(ctx, "db-c", nil)
+	reg.CreateTable(ctx, "db-a", nil)
+	reg.CreateTable(ctx, "db-b", nil)
+	reg.CreateTable(ctx, "db-c", nil)
 
-	metas, err := reg.ListDatabases(ctx)
+	metas, err := reg.ListTables(ctx)
 	if err != nil {
-		t.Fatalf("ListDatabases: %v", err)
+		t.Fatalf("ListTables: %v", err)
 	}
 	if len(metas) != 3 {
-		t.Fatalf("expected 3 databases, got %d", len(metas))
+		t.Fatalf("expected 3 tables, got %d", len(metas))
 	}
 
 	names := map[string]bool{}
@@ -175,26 +175,26 @@ func TestRegistryListDatabases(t *testing.T) {
 	}
 	for _, name := range []string{"db-a", "db-b", "db-c"} {
 		if !names[name] {
-			t.Fatalf("expected database %s in list", name)
+			t.Fatalf("expected table %s in list", name)
 		}
 	}
 }
 
-// TestRegistryDeleteThenCreate verifies that a deleted database name can be reused.
+// TestRegistryDeleteThenCreate verifies that a deleted table name can be reused.
 func TestRegistryDeleteThenCreate(t *testing.T) {
 	reg := newTestRegistry(t)
 	defer reg.Close()
 
 	ctx := context.Background()
 
-	reg.CreateDatabase(ctx, "recycle", nil)
-	if err := reg.DeleteDatabase(ctx, "recycle"); err != nil {
-		t.Fatalf("DeleteDatabase: %v", err)
+	reg.CreateTable(ctx, "recycle", nil)
+	if err := reg.DeleteTable(ctx, "recycle"); err != nil {
+		t.Fatalf("DeleteTable: %v", err)
 	}
 
-	_, err := reg.CreateDatabase(ctx, "recycle", nil)
+	_, err := reg.CreateTable(ctx, "recycle", nil)
 	if err != nil {
-		t.Fatalf("CreateDatabase after delete: %v", err)
+		t.Fatalf("CreateTable after delete: %v", err)
 	}
 }
 
@@ -205,7 +205,7 @@ func TestRegistryUpdateSchema(t *testing.T) {
 
 	ctx := context.Background()
 
-	reg.CreateDatabase(ctx, "schemadb", &document.Schema{
+	reg.CreateTable(ctx, "schemadb", &document.Schema{
 		Fields: []document.FieldDefinition{{Name: "a", Type: document.FieldTypeString}},
 	})
 
@@ -221,18 +221,123 @@ func TestRegistryUpdateSchema(t *testing.T) {
 
 	// Clear cache and reload to verify persistence.
 	reg.mu.Lock()
-	if db, ok := reg.databases["schemadb"]; ok {
+	if db, ok := reg.tables["schemadb"]; ok {
 		db.Close()
-		delete(reg.databases, "schemadb")
+		delete(reg.tables, "schemadb")
 	}
 	reg.mu.Unlock()
 
-	db, err := reg.GetDatabase(ctx, "schemadb")
+	db, err := reg.GetTable(ctx, "schemadb")
 	if err != nil {
-		t.Fatalf("GetDatabase after schema update: %v", err)
+		t.Fatalf("GetTable after schema update: %v", err)
 	}
 	if len(db.Schema.Fields) != 2 {
 		t.Fatalf("expected 2 fields in schema, got %d", len(db.Schema.Fields))
+	}
+}
+
+// TestEnsureSystemTables verifies that system tables are created with System=true
+// and that calling EnsureSystemTables a second time is idempotent.
+func TestEnsureSystemTables(t *testing.T) {
+	reg := newTestRegistry(t)
+	defer reg.Close()
+
+	ctx := context.Background()
+
+	defs := []SystemTableDef{
+		{
+			Name: "_sys_users",
+			Schema: &document.Schema{
+				Fields: []document.FieldDefinition{{Name: "email", Type: document.FieldTypeString}},
+			},
+		},
+	}
+
+	if err := reg.EnsureSystemTables(ctx, defs); err != nil {
+		t.Fatalf("EnsureSystemTables: %v", err)
+	}
+
+	table, err := reg.GetTable(ctx, "_sys_users")
+	if err != nil {
+		t.Fatalf("GetTable: %v", err)
+	}
+	if !table.System {
+		t.Fatal("expected table.System to be true")
+	}
+
+	// Second call should be idempotent (no error).
+	if err := reg.EnsureSystemTables(ctx, defs); err != nil {
+		t.Fatalf("EnsureSystemTables (idempotent): %v", err)
+	}
+}
+
+// TestSystemTablePersistence verifies that the System flag survives a cache eviction
+// and reload from the object store.
+func TestSystemTablePersistence(t *testing.T) {
+	reg := newTestRegistry(t)
+	defer reg.Close()
+
+	ctx := context.Background()
+
+	defs := []SystemTableDef{
+		{Name: "_sys_config"},
+	}
+
+	if err := reg.EnsureSystemTables(ctx, defs); err != nil {
+		t.Fatalf("EnsureSystemTables: %v", err)
+	}
+
+	// Clear in-memory cache.
+	reg.mu.Lock()
+	if db, ok := reg.tables["_sys_config"]; ok {
+		db.Close()
+		delete(reg.tables, "_sys_config")
+	}
+	reg.mu.Unlock()
+
+	// Reload from store.
+	table, err := reg.GetTable(ctx, "_sys_config")
+	if err != nil {
+		t.Fatalf("GetTable after cache clear: %v", err)
+	}
+	if !table.System {
+		t.Fatal("expected System=true after reload")
+	}
+}
+
+// TestIsSystemTable verifies IsSystemTable returns false for regular tables
+// and true for system tables.
+func TestIsSystemTable(t *testing.T) {
+	reg := newTestRegistry(t)
+	defer reg.Close()
+
+	ctx := context.Background()
+
+	// Create a regular table.
+	_, err := reg.CreateTable(ctx, "regular", nil)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	isSystem, err := reg.IsSystemTable(ctx, "regular")
+	if err != nil {
+		t.Fatalf("IsSystemTable(regular): %v", err)
+	}
+	if isSystem {
+		t.Fatal("expected regular table to not be system")
+	}
+
+	// Create a system table.
+	if err := reg.EnsureSystemTables(ctx, []SystemTableDef{{Name: "_sys_test"}}); err != nil {
+		t.Fatalf("EnsureSystemTables: %v", err)
+	}
+
+	isSystem, err = reg.IsSystemTable(ctx, "_sys_test")
+	if err != nil {
+		t.Fatalf("IsSystemTable(_sys_test): %v", err)
+	}
+	if !isSystem {
+		t.Fatal("expected system table to be system")
 	}
 }
 
