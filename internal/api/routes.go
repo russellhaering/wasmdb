@@ -26,6 +26,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/tables/{table}/search/text", s.handleTextSearch)
 	mux.HandleFunc("POST /v1/tables/{table}/search/attributes", s.handleAttributeSearch)
 
+	// Users.
+	mux.HandleFunc("POST /v1/users", s.handleCreateUser)
+	mux.HandleFunc("GET /v1/users", s.handleListUsers)
+	mux.HandleFunc("GET /v1/users/{id}", s.handleGetUser)
+	mux.HandleFunc("DELETE /v1/users/{id}", s.handleDeleteUser)
+
 	// GraphQL.
 	mux.Handle("POST /v1/graphql", s.graphql)
 

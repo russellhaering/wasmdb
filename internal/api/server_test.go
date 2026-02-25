@@ -25,6 +25,10 @@ func setupTestServer(t *testing.T) *Server {
 	})
 	t.Cleanup(func() { registry.Close() })
 
+	if err := registry.EnsureSystemTables(context.Background(), database.SystemTables); err != nil {
+		t.Fatal(err)
+	}
+
 	srv, err := NewServer(context.Background(), ServerConfig{
 		ListenAddr: ":0",
 		Registry:   registry,
@@ -177,10 +181,18 @@ func TestListTables(t *testing.T) {
 		t.Fatalf("list: %d: %s", w.Code, w.Body.String())
 	}
 
-	var list []map[string]string
+	var list []map[string]any
 	json.Unmarshal(w.Body.Bytes(), &list)
-	if len(list) != 2 {
-		t.Fatalf("expected 2 tables, got %d", len(list))
+
+	// Filter out system tables to check only user-created tables.
+	var userTables []map[string]any
+	for _, tbl := range list {
+		if sys, _ := tbl["system"].(bool); !sys {
+			userTables = append(userTables, tbl)
+		}
+	}
+	if len(userTables) != 2 {
+		t.Fatalf("expected 2 user tables, got %d", len(userTables))
 	}
 }
 
@@ -341,5 +353,137 @@ func TestUpdateSystemTableSchemaForbidden(t *testing.T) {
 	}
 }
 
-// Unused import guard.
-var _ = context.Background
+func TestCreateAndGetUser(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user.
+	body, _ := json.Marshal(map[string]string{
+		"email":    "alice@example.com",
+		"password": "s3cret",
+	})
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/users", body))
+	if w.Code != 201 {
+		t.Fatalf("create user: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created map[string]any
+	json.Unmarshal(w.Body.Bytes(), &created)
+	if created["email"] != "alice@example.com" {
+		t.Fatalf("expected email alice@example.com, got %v", created["email"])
+	}
+	if _, ok := created["password_hash"]; ok {
+		t.Fatal("password_hash should not be in response")
+	}
+	if _, ok := created["password"]; ok {
+		t.Fatal("password should not be in response")
+	}
+
+	userID := created["id"].(string)
+
+	// Get user.
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/users/"+userID, nil))
+	if w.Code != 200 {
+		t.Fatalf("get user: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var fetched map[string]any
+	json.Unmarshal(w.Body.Bytes(), &fetched)
+	if fetched["email"] != "alice@example.com" {
+		t.Fatalf("expected email alice@example.com, got %v", fetched["email"])
+	}
+	if _, ok := fetched["password_hash"]; ok {
+		t.Fatal("password_hash should not be in GET response")
+	}
+}
+
+func TestCreateUserDuplicateEmail(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body, _ := json.Marshal(map[string]string{
+		"email":    "bob@example.com",
+		"password": "pass1",
+	})
+
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/users", body))
+	if w.Code != 201 {
+		t.Fatalf("first create: expected 201, got %d", w.Code)
+	}
+
+	// Second user with same email should succeed (no uniqueness constraint).
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/users", body))
+	if w.Code != 201 {
+		t.Fatalf("second create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteUser(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Create user.
+	body, _ := json.Marshal(map[string]string{
+		"email":    "del@example.com",
+		"password": "pass",
+	})
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/users", body))
+	if w.Code != 201 {
+		t.Fatalf("create: expected 201, got %d", w.Code)
+	}
+	var created map[string]any
+	json.Unmarshal(w.Body.Bytes(), &created)
+	userID := created["id"].(string)
+
+	// Delete user.
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "DELETE", "/v1/users/"+userID, nil))
+	if w.Code != 204 {
+		t.Fatalf("delete: expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Get should return 404.
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/users/"+userID, nil))
+	if w.Code != 404 {
+		t.Fatalf("get after delete: expected 404, got %d", w.Code)
+	}
+}
+
+func TestSystemTableDocumentCRUDBlocked(t *testing.T) {
+	srv := setupTestServer(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"content": "should not work",
+	})
+
+	// POST document to _users should be 403.
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "POST", "/v1/tables/_users/documents", body))
+	if w.Code != 403 {
+		t.Fatalf("POST documents: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// GET document from _users should be 403.
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "GET", "/v1/tables/_users/documents/some-id", nil))
+	if w.Code != 403 {
+		t.Fatalf("GET document: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// PUT document in _users should be 403.
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "PUT", "/v1/tables/_users/documents/some-id", body))
+	if w.Code != 403 {
+		t.Fatalf("PUT document: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// DELETE document from _users should be 403.
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, "DELETE", "/v1/tables/_users/documents/some-id", nil))
+	if w.Code != 403 {
+		t.Fatalf("DELETE document: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}

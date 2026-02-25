@@ -15,6 +15,11 @@ type createDocumentRequest struct {
 func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 	tableName := r.PathValue("table")
 
+	if isSystem, _ := s.registry.IsSystemTable(r.Context(), tableName); isSystem {
+		writeErrorMsg(w, 403, "forbidden", "direct document access to system tables is not allowed")
+		return
+	}
+
 	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
 		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
@@ -43,6 +48,11 @@ func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBulkCreateDocuments(w http.ResponseWriter, r *http.Request) {
 	tableName := r.PathValue("table")
+
+	if isSystem, _ := s.registry.IsSystemTable(r.Context(), tableName); isSystem {
+		writeErrorMsg(w, 403, "forbidden", "direct document access to system tables is not allowed")
+		return
+	}
 
 	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
@@ -73,6 +83,11 @@ func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 	tableName := r.PathValue("table")
 	docID := r.PathValue("id")
 
+	if isSystem, _ := s.registry.IsSystemTable(r.Context(), tableName); isSystem {
+		writeErrorMsg(w, 403, "forbidden", "direct document access to system tables is not allowed")
+		return
+	}
+
 	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
 		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
@@ -95,6 +110,11 @@ func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 	tableName := r.PathValue("table")
 	docID := r.PathValue("id")
+
+	if isSystem, _ := s.registry.IsSystemTable(r.Context(), tableName); isSystem {
+		writeErrorMsg(w, 403, "forbidden", "direct document access to system tables is not allowed")
+		return
+	}
 
 	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {
@@ -125,6 +145,11 @@ func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	tableName := r.PathValue("table")
 	docID := r.PathValue("id")
+
+	if isSystem, _ := s.registry.IsSystemTable(r.Context(), tableName); isSystem {
+		writeErrorMsg(w, 403, "forbidden", "direct document access to system tables is not allowed")
+		return
+	}
 
 	table, err := s.registry.GetTable(r.Context(), tableName)
 	if err != nil {

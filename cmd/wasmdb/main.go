@@ -62,8 +62,8 @@ func main() {
 	})
 	defer registry.Close()
 
-	// Ensure system tables exist (no-op with nil defs; future PRs populate this).
-	if err := registry.EnsureSystemTables(ctx, nil); err != nil {
+	// Ensure system tables exist.
+	if err := registry.EnsureSystemTables(ctx, database.SystemTables); err != nil {
 		slog.Error("failed to ensure system tables", "err", err)
 		os.Exit(1)
 	}

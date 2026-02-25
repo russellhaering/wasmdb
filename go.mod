@@ -14,6 +14,7 @@ require (
 	github.com/graphql-go/graphql v0.8.1
 	github.com/modelcontextprotocol/go-sdk v1.3.1
 	github.com/oklog/ulid/v2 v2.1.1
+	golang.org/x/crypto v0.48.0
 )
 
 require (
@@ -70,6 +71,6 @@ require (
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )
