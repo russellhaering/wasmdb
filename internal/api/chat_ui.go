@@ -159,6 +159,25 @@ const chatHTML = `<!DOCTYPE html>
     60% { content: '..'; }
     80%, 100% { content: '...'; }
   }
+  #auth-screen label {
+    display: block;
+    font-size: 13px;
+    color: #a1a1aa;
+    margin-bottom: 4px;
+    text-align: left;
+  }
+  #auth-screen input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid #3f3f46;
+    background: #27272a;
+    color: #fafafa;
+    font-size: 14px;
+    outline: none;
+    margin-bottom: 12px;
+  }
+  #auth-screen input:focus { border-color: #3b82f6; }
 </style>
 </head>
 <body>
@@ -168,15 +187,15 @@ const chatHTML = `<!DOCTYPE html>
 </header>
 
 <div id="auth-screen" style="flex:1;display:flex;align-items:center;justify-content:center;">
-  <div style="text-align:center;">
-    <p style="margin-bottom:12px;color:#a1a1aa;font-size:14px;">Enter your API token to start chatting.</p>
-    <div style="display:flex;gap:10px;">
-      <input id="token-input" type="password" placeholder="Bearer token"
-        style="padding:10px 14px;border-radius:10px;border:1px solid #3f3f46;background:#27272a;color:#fafafa;font-size:14px;outline:none;width:280px;">
-      <button onclick="authenticate()"
-        style="padding:10px 20px;border-radius:10px;border:none;background:#3b82f6;color:white;font-weight:600;font-size:14px;cursor:pointer;">Connect</button>
-    </div>
-    <p id="auth-error" style="margin-top:10px;color:#fca5a5;font-size:13px;display:none;"></p>
+  <div style="width:300px;">
+    <p style="margin-bottom:16px;color:#a1a1aa;font-size:14px;text-align:center;">Sign in to start chatting.</p>
+    <label for="email-input">Email</label>
+    <input id="email-input" type="email" placeholder="you@example.com" autofocus>
+    <label for="password-input">Password</label>
+    <input id="password-input" type="password" placeholder="Password">
+    <button onclick="authenticate()"
+      style="width:100%;padding:10px 20px;border-radius:10px;border:none;background:#3b82f6;color:white;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
+    <p id="auth-error" style="margin-top:10px;color:#fca5a5;font-size:13px;display:none;text-align:center;"></p>
   </div>
 </div>
 
@@ -190,19 +209,59 @@ const chat = document.getElementById('chat');
 const msgInput = document.getElementById('msg');
 const sendBtn = document.getElementById('send');
 const sessionId = crypto.randomUUID();
-let apiToken = '';
 
-function authenticate() {
-  const token = document.getElementById('token-input').value.trim();
-  if (!token) return;
-  apiToken = token;
+// On page load, check if we already have a valid session cookie.
+(async function checkSession() {
+  try {
+    const resp = await fetch('/v1/auth/me');
+    if (resp.ok) {
+      showChat();
+    }
+  } catch (e) {
+    // No session, show login.
+  }
+})();
+
+function showChat() {
   document.getElementById('auth-screen').style.display = 'none';
   chat.style.display = 'flex';
   document.getElementById('input-area').style.display = 'flex';
   msgInput.focus();
 }
 
-document.getElementById('token-input').addEventListener('keydown', (e) => {
+async function authenticate() {
+  const email = document.getElementById('email-input').value.trim();
+  const password = document.getElementById('password-input').value;
+  const errEl = document.getElementById('auth-error');
+
+  if (!email || !password) {
+    errEl.textContent = 'Email and password are required.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  errEl.style.display = 'none';
+
+  try {
+    const resp = await fetch('/v1/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email, password})
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      errEl.textContent = data.message || 'Login failed.';
+      errEl.style.display = 'block';
+      return;
+    }
+    showChat();
+  } catch (e) {
+    errEl.textContent = 'Connection error: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+document.getElementById('password-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') authenticate();
 });
 
@@ -259,17 +318,14 @@ async function send() {
   try {
     const resp = await fetch('/v1/chat', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + apiToken
-      },
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({session_id: sessionId, message: text})
     });
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       if (resp.status === 401) {
-        assistantDiv.textContent = 'Authentication failed. Please reload and try a different token.';
+        assistantDiv.textContent = 'Session expired. Please reload and sign in again.';
       } else {
         assistantDiv.textContent = 'Error: ' + (err.message || resp.statusText);
       }

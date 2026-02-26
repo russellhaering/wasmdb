@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,8 +10,19 @@ import (
 
 	"github.com/russellhaering/wasmdb/internal/agent"
 	"github.com/russellhaering/wasmdb/internal/api/graphqlapi"
+	"github.com/russellhaering/wasmdb/internal/auth"
 	"github.com/russellhaering/wasmdb/internal/database"
 )
+
+type sessionContextKeyType struct{}
+
+var sessionContextKey = sessionContextKeyType{}
+
+// SessionFromContext returns the session attached to the request context, if any.
+func SessionFromContext(ctx context.Context) *auth.Session {
+	s, _ := ctx.Value(sessionContextKey).(*auth.Session)
+	return s
+}
 
 // Server is the HTTP server for the WasmDB API.
 type Server struct {
@@ -20,27 +30,21 @@ type Server struct {
 	registry    *database.Registry
 	graphql     *graphqlapi.Handler
 	chatManager *agent.ChatManager
-	apiTokens   map[string]struct{}
+	sessions    *auth.SessionManager
 }
 
 // ServerConfig configures the API server.
 type ServerConfig struct {
 	ListenAddr      string
 	Registry        *database.Registry
-	APITokens       []string
 	AnthropicAPIKey string
 }
 
 // NewServer creates a new API server.
 func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
-	tokens := make(map[string]struct{}, len(cfg.APITokens))
-	for _, t := range cfg.APITokens {
-		tokens[t] = struct{}{}
-	}
-
 	s := &Server{
-		registry:  cfg.Registry,
-		apiTokens: tokens,
+		registry: cfg.Registry,
+		sessions: auth.NewSessionManager(cfg.Registry),
 	}
 
 	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)
@@ -96,20 +100,29 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// checkAuth validates the bearer token in the Authorization header against the
-// configured set of API tokens. Returns true if the token is valid.
-func (s *Server) checkAuth(r *http.Request) bool {
-	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
-		return false
+// authenticateRequest extracts and validates a session token from the request.
+// It checks the wasmdb_session cookie first, then falls back to Authorization header.
+func (s *Server) authenticateRequest(r *http.Request) (*auth.Session, error) {
+	var rawToken string
+
+	// Try cookie first.
+	if cookie, err := r.Cookie("wasmdb_session"); err == nil && cookie.Value != "" {
+		rawToken = cookie.Value
 	}
-	token := header[len("Bearer "):]
-	for allowed := range s.apiTokens {
-		if subtle.ConstantTimeCompare([]byte(token), []byte(allowed)) == 1 {
-			return true
+
+	// Fall back to Authorization header.
+	if rawToken == "" {
+		header := r.Header.Get("Authorization")
+		if strings.HasPrefix(header, "Bearer ") {
+			rawToken = header[len("Bearer "):]
 		}
 	}
-	return false
+
+	if rawToken == "" {
+		return nil, fmt.Errorf("no session token")
+	}
+
+	return s.sessions.ValidateSession(r.Context(), rawToken)
 }
 
 // middleware chains request ID, auth, logging, and panic recovery middleware.
@@ -137,15 +150,18 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}()
 
-		// Auth — skip for health check and chat UI page.
+		// Auth — skip for health checks, login, and CLI login page.
 		switch r.URL.Path {
-		case "/healthz", "/readyz", "/chat":
+		case "/healthz", "/readyz", "/v1/auth/login", "/auth/cli-login", "/chat":
 			// No auth required.
 		default:
-			if !s.checkAuth(r) {
+			session, err := s.authenticateRequest(r)
+			if err != nil {
 				writeError(w, ErrUnauthorized)
 				return
 			}
+			ctx := context.WithValue(r.Context(), sessionContextKey, session)
+			r = r.WithContext(ctx)
 		}
 
 		// Wrap response writer to capture status.

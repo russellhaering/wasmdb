@@ -32,6 +32,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/users/{id}", s.handleGetUser)
 	mux.HandleFunc("DELETE /v1/users/{id}", s.handleDeleteUser)
 
+	// Auth.
+	mux.HandleFunc("POST /v1/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /v1/auth/logout", s.handleLogout)
+	mux.HandleFunc("GET /v1/auth/me", s.handleAuthMe)
+	mux.HandleFunc("GET /auth/cli-login", s.handleCLILoginPage)
+
 	// GraphQL.
 	mux.Handle("POST /v1/graphql", s.graphql)
 

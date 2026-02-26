@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -33,7 +32,8 @@ type Config struct {
 	AnthropicAPIKey string
 
 	// Auth
-	APITokens []string
+	SeedUserEmail    string
+	SeedUserPassword string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -51,23 +51,11 @@ func Load() *Config {
 		WALFlushInterval: envOrDefaultDuration("WASMDB_WAL_FLUSH_INTERVAL", 1*time.Second),
 		OpenAIAPIKey:     envOrDefault("OPENAI_API_KEY", ""),
 		AnthropicAPIKey:  envOrDefault("ANTHROPIC_API_KEY", ""),
-		APITokens:        parseTokens(os.Getenv("WASMDB_API_TOKENS")),
+		SeedUserEmail:    envOrDefault("WASMDB_SEED_USER_EMAIL", ""),
+		SeedUserPassword: envOrDefault("WASMDB_SEED_USER_PASSWORD", ""),
 	}
 }
 
-func parseTokens(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var tokens []string
-	for _, t := range strings.Split(s, ",") {
-		t = strings.TrimSpace(t)
-		if t != "" {
-			tokens = append(tokens, t)
-		}
-	}
-	return tokens
-}
 
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {

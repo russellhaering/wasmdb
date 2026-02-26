@@ -51,16 +51,23 @@ func run(ctx context.Context, args []string) error {
 		url = "http://localhost:8080"
 	}
 
+	// Token resolution: --token flag > WASMDB_API_TOKEN env > stored credentials.
 	if token == "" {
 		token = os.Getenv("WASMDB_API_TOKEN")
+	}
+	if token == "" {
+		if creds, err := cli.LoadCredentials(url); err == nil {
+			token = creds.Token
+		}
 	}
 
 	backend := httpbackend.New(url, token)
 
 	return cli.Run(ctx, remaining, cli.RunConfig{
-		Backend: backend,
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
-		Stdin:   os.Stdin,
+		Backend:   backend,
+		ServerURL: url,
+		Stdout:    os.Stdout,
+		Stderr:    os.Stderr,
+		Stdin:     os.Stdin,
 	})
 }

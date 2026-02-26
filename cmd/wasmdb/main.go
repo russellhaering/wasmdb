@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/russellhaering/wasmdb/internal/api"
+	"github.com/russellhaering/wasmdb/internal/auth"
 	"github.com/russellhaering/wasmdb/internal/config"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/embedding"
@@ -68,11 +69,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Seed initial user if configured.
+	if cfg.SeedUserEmail != "" && cfg.SeedUserPassword != "" {
+		if err := auth.SeedUser(ctx, registry, cfg.SeedUserEmail, cfg.SeedUserPassword); err != nil {
+			slog.Error("failed to seed user", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	// Start API server.
 	srv, err := api.NewServer(ctx, api.ServerConfig{
 		ListenAddr:      cfg.ListenAddr,
 		Registry:        registry,
-		APITokens:       cfg.APITokens,
 		AnthropicAPIKey: cfg.AnthropicAPIKey,
 	})
 	if err != nil {

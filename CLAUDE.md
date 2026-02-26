@@ -2,22 +2,48 @@
 
 ## Authentication
 
-All API endpoints require a bearer token except `/healthz` and `/readyz`.
+All API endpoints require session-based authentication except `/healthz`, `/readyz`, `/v1/auth/login`, and `/auth/cli-login`.
 
-Set `WASMDB_API_TOKENS` to a comma-separated list of valid tokens:
+### Seed User
+
+Bootstrap the first deployment by setting environment variables:
 
 ```bash
-export WASMDB_API_TOKENS=my-secret-token
+export WASMDB_SEED_USER_EMAIL=admin@example.com
+export WASMDB_SEED_USER_PASSWORD=your-password
 ```
 
-Requests must include the header:
+A user is created on startup only if the `_users` table is empty. Once any user exists, the seed is a no-op.
 
+### Login
+
+Authenticate via `POST /v1/auth/login` with `{"email": "...", "password": "..."}`. The response includes a session token and sets a `wasmdb_session` cookie.
+
+Requests can authenticate with either:
+- `wasmdb_session` cookie (set automatically by the login endpoint)
+- `Authorization: Bearer <session-token>` header
+
+Sessions expire after 7 days. Only the SHA-256 hash of the token is stored in the `_sessions` system table.
+
+### CLI Login
+
+```bash
+wasmdb login --url http://localhost:8080
 ```
-Authorization: Bearer my-secret-token
+
+Opens a browser for interactive login. For headless environments:
+
+```bash
+wasmdb login --url http://localhost:8080 --email admin@example.com --password your-password
 ```
 
-Multiple tokens are supported for rotation: `WASMDB_API_TOKENS=token1,token2`.
+Credentials are stored at `~/.config/wasmdb/credentials.json`.
 
-If `WASMDB_API_TOKENS` is unset or empty, all API requests are rejected (fail closed).
+### Auth Endpoints
 
-The auth middleware uses constant-time comparison and is implemented in `internal/api/server.go`.
+- `POST /v1/auth/login` — authenticate, returns token + sets cookie
+- `POST /v1/auth/logout` — invalidate session, clear cookie
+- `GET /v1/auth/me` — return current user info
+- `GET /auth/cli-login` — HTML login page for CLI browser flow
+
+The auth middleware is implemented in `internal/api/server.go`, session management in `internal/auth/`.

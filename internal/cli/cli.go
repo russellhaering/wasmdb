@@ -10,10 +10,11 @@ import (
 
 // RunConfig holds configuration for a CLI invocation.
 type RunConfig struct {
-	Backend Backend
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Stdin   io.Reader
+	Backend   Backend
+	ServerURL string
+	Stdout    io.Writer
+	Stderr    io.Writer
+	Stdin     io.Reader
 }
 
 // cmdContext is the context passed to each command handler.
@@ -112,6 +113,13 @@ func Run(ctx context.Context, argv []string, cfg RunConfig) error {
 	}
 
 	_, jsonMode := flags["json"]
+
+	// Inject server URL as a flag so commands can access it.
+	if cfg.ServerURL != "" {
+		if _, ok := flags["url"]; !ok {
+			flags["url"] = []string{cfg.ServerURL}
+		}
+	}
 
 	cctx := &cmdContext{
 		Context: ctx,

@@ -13,4 +13,15 @@ var SystemTables = []SystemTableDef{
 			},
 		},
 	},
+	{
+		Name: "_sessions",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "token_hash", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "user_id", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "user_email", Type: document.FieldTypeString, Required: true},
+				{Name: "expires_at", Type: document.FieldTypeDatetime, Required: true},
+			},
+		},
+	},
 }
