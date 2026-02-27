@@ -12,197 +12,293 @@ const chatHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WasmDB Chat</title>
+<title>WasmDB</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0f1117;
-    color: #e4e4e7;
+    font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", monospace;
+    background: #0a0a0a;
+    color: #b0b0b0;
     height: 100vh;
     display: flex;
     flex-direction: column;
+    font-size: 14px;
+    line-height: 1.5;
   }
   header {
-    padding: 12px 20px;
-    border-bottom: 1px solid #27272a;
+    padding: 6px 16px;
+    border-bottom: 1px solid #333;
     display: flex;
     align-items: center;
-    gap: 10px;
-    background: #18181b;
+    gap: 0;
+    background: #0a0a0a;
+    color: #606060;
+    font-size: 13px;
   }
-  header h1 {
-    font-size: 16px;
-    font-weight: 600;
-    color: #fafafa;
+  header .title {
+    color: #4ec94e;
+    font-weight: bold;
   }
-  header .badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    background: #3b82f6;
-    color: white;
-    font-weight: 500;
+  header .sep { color: #333; margin: 0 8px; }
+  header .label { color: #5ccfe6; }
+  header::before {
+    content: '─── ';
+    color: #333;
+  }
+  header::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #333;
+    margin-left: 8px;
   }
   #chat {
     flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    padding: 12px 16px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 4px;
   }
+  #chat::-webkit-scrollbar { width: 6px; }
+  #chat::-webkit-scrollbar-track { background: transparent; }
+  #chat::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
   .msg {
-    max-width: 85%;
-    padding: 12px 16px;
-    border-radius: 12px;
+    max-width: 100%;
+    padding: 2px 0;
     line-height: 1.5;
     font-size: 14px;
     white-space: pre-wrap;
     word-wrap: break-word;
   }
   .msg.user {
-    align-self: flex-end;
-    background: #3b82f6;
-    color: white;
-    border-bottom-right-radius: 4px;
+    color: #e0e0e0;
+  }
+  .msg.user::before {
+    content: '> ';
+    color: #4ec94e;
+    font-weight: bold;
   }
   .msg.assistant {
-    align-self: flex-start;
-    background: #27272a;
-    color: #e4e4e7;
-    border-bottom-left-radius: 4px;
+    color: #b0b0b0;
+    padding-left: 2px;
   }
   .msg.assistant .tool-call {
-    display: inline-block;
-    margin: 4px 0;
-    padding: 4px 8px;
-    background: #1e1e2e;
-    border: 1px solid #3f3f46;
-    border-radius: 6px;
-    font-family: "SF Mono", "Fira Code", monospace;
-    font-size: 12px;
-    color: #a1a1aa;
+    display: block;
+    margin: 2px 0;
+    padding: 1px 0;
+    font-size: 13px;
+    color: #606060;
   }
   .msg.assistant .tool-call .tool-name {
-    color: #60a5fa;
-    font-weight: 600;
+    color: #5ccfe6;
   }
-  .msg.assistant .tool-call.error {
-    border-color: #7f1d1d;
-    color: #fca5a5;
+  .msg.assistant .tool-call.error .tool-name {
+    color: #f07070;
+  }
+  .msg.assistant .tool-call::before {
+    content: '  [';
+    color: #606060;
+  }
+  .msg.assistant .tool-call::after {
+    content: ']';
+    color: #606060;
   }
   .msg.system {
-    align-self: center;
-    background: transparent;
-    color: #71717a;
+    color: #606060;
+    font-size: 13px;
+    padding: 2px 0;
+  }
+  /* A2UI DataTable */
+  .a2ui-datatable {
+    border-collapse: collapse;
+    margin: 6px 0;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .a2ui-datatable th {
+    color: #e0e0e0;
+    font-weight: bold;
+    text-align: left;
+    padding: 2px 12px 2px 0;
+    border-bottom: 1px solid #4ec94e;
+  }
+  .a2ui-datatable td {
+    padding: 2px 12px 2px 0;
+    color: #b0b0b0;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .a2ui-datatable caption {
+    text-align: left;
+    color: #606060;
     font-size: 12px;
-    padding: 4px;
+    padding-bottom: 4px;
+  }
+  /* A2UI Card */
+  .a2ui-card {
+    border: 1px solid #333;
+    margin: 6px 0;
+    padding: 8px 12px;
+    max-width: 500px;
+  }
+  .a2ui-card-title {
+    color: #5ccfe6;
+    font-weight: bold;
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+  /* A2UI Text */
+  .a2ui-text { margin: 1px 0; }
+  .a2ui-text .a2ui-label {
+    color: #606060;
+    margin-right: 4px;
+  }
+  .a2ui-text .a2ui-label::after { content: ':'; }
+  .a2ui-text-bold { color: #e0e0e0; font-weight: bold; }
+  .a2ui-text-dim { color: #606060; }
+  .a2ui-text-code {
+    background: #1a1a1a;
+    padding: 1px 4px;
+    color: #e6b450;
+  }
+  /* A2UI layout */
+  .a2ui-column { display: flex; flex-direction: column; }
+  .a2ui-row { display: flex; flex-direction: row; gap: 16px; }
+  .a2ui-divider {
+    border: none;
+    border-top: 1px solid #333;
+    margin: 4px 0;
   }
   #input-area {
-    padding: 16px 20px;
-    border-top: 1px solid #27272a;
-    background: #18181b;
+    padding: 8px 16px 12px;
+    border-top: 1px solid #333;
+    background: #0a0a0a;
     display: flex;
-    gap: 10px;
+    gap: 8px;
+    align-items: flex-end;
+  }
+  #input-area .prompt-char {
+    color: #4ec94e;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 6px 0;
+    flex-shrink: 0;
   }
   #input-area textarea {
     flex: 1;
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid #3f3f46;
-    background: #27272a;
-    color: #fafafa;
+    padding: 6px 0;
+    border: none;
+    background: transparent;
+    color: #e0e0e0;
     font-family: inherit;
     font-size: 14px;
     resize: none;
     outline: none;
-    min-height: 42px;
+    min-height: 28px;
     max-height: 120px;
-  }
-  #input-area textarea:focus {
-    border-color: #3b82f6;
+    line-height: 1.5;
   }
   #input-area textarea::placeholder {
-    color: #71717a;
+    color: #444;
   }
   #input-area button {
-    padding: 10px 20px;
-    border-radius: 10px;
-    border: none;
-    background: #3b82f6;
-    color: white;
-    font-weight: 600;
-    font-size: 14px;
+    padding: 4px 12px;
+    border: 1px solid #333;
+    background: transparent;
+    color: #4ec94e;
+    font-family: inherit;
+    font-size: 13px;
     cursor: pointer;
     white-space: nowrap;
+    flex-shrink: 0;
   }
-  #input-area button:hover { background: #2563eb; }
+  #input-area button:hover { background: #1a1a1a; }
   #input-area button:disabled {
-    background: #3f3f46;
-    color: #71717a;
+    color: #333;
+    border-color: #222;
     cursor: not-allowed;
   }
-  .typing-indicator {
-    display: inline-block;
-    color: #71717a;
-    font-size: 13px;
-    padding: 8px 16px;
+  /* Auth screen - terminal style */
+  #auth-screen {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .typing-indicator::after {
-    content: '';
-    animation: dots 1.5s steps(4, end) infinite;
+  #auth-box {
+    width: 340px;
+    border: 1px solid #333;
+    padding: 16px;
   }
-  @keyframes dots {
-    0%, 20% { content: ''; }
-    40% { content: '.'; }
-    60% { content: '..'; }
-    80%, 100% { content: '...'; }
+  #auth-box .auth-title {
+    color: #4ec94e;
+    font-weight: bold;
+    margin-bottom: 12px;
+    text-align: center;
+    font-size: 14px;
   }
   #auth-screen label {
     display: block;
     font-size: 13px;
-    color: #a1a1aa;
-    margin-bottom: 4px;
-    text-align: left;
+    color: #606060;
+    margin-bottom: 2px;
   }
   #auth-screen input {
     width: 100%;
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid #3f3f46;
-    background: #27272a;
-    color: #fafafa;
+    padding: 6px 8px;
+    border: 1px solid #333;
+    background: #111;
+    color: #e0e0e0;
+    font-family: inherit;
     font-size: 14px;
     outline: none;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
-  #auth-screen input:focus { border-color: #3b82f6; }
+  #auth-screen input:focus { border-color: #4ec94e; }
+  #auth-screen .auth-btn {
+    width: 100%;
+    padding: 6px;
+    border: 1px solid #4ec94e;
+    background: transparent;
+    color: #4ec94e;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: bold;
+  }
+  #auth-screen .auth-btn:hover { background: #112211; }
+  #auth-error {
+    margin-top: 8px;
+    color: #f07070;
+    font-size: 13px;
+    display: none;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>WasmDB</h1>
-  <span class="badge">Chat</span>
+  <span class="title">wasmdb</span>
+  <span class="sep">|</span>
+  <span class="label">chat</span>
 </header>
 
-<div id="auth-screen" style="flex:1;display:flex;align-items:center;justify-content:center;">
-  <div style="width:300px;">
-    <p style="margin-bottom:16px;color:#a1a1aa;font-size:14px;text-align:center;">Sign in to start chatting.</p>
-    <label for="email-input">Email</label>
+<div id="auth-screen">
+  <div id="auth-box">
+    <div class="auth-title">wasmdb login</div>
+    <label for="email-input">email</label>
     <input id="email-input" type="email" placeholder="you@example.com" autofocus>
-    <label for="password-input">Password</label>
-    <input id="password-input" type="password" placeholder="Password">
-    <button onclick="authenticate()"
-      style="width:100%;padding:10px 20px;border-radius:10px;border:none;background:#3b82f6;color:white;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
-    <p id="auth-error" style="margin-top:10px;color:#fca5a5;font-size:13px;display:none;text-align:center;"></p>
+    <label for="password-input">password</label>
+    <input id="password-input" type="password" placeholder="********">
+    <button class="auth-btn" onclick="authenticate()">connect</button>
+    <p id="auth-error"></p>
   </div>
 </div>
 
 <div id="chat" style="display:none;"></div>
 <div id="input-area" style="display:none;">
-  <textarea id="msg" placeholder="Ask about your databases..." rows="1"></textarea>
-  <button id="send" onclick="send()">Send</button>
+  <span class="prompt-char">$</span>
+  <textarea id="msg" placeholder="ask about your databases..." rows="1"></textarea>
+  <button id="send" onclick="send()">send</button>
 </div>
 <script>
 const chat = document.getElementById('chat');
@@ -210,16 +306,11 @@ const msgInput = document.getElementById('msg');
 const sendBtn = document.getElementById('send');
 const sessionId = crypto.randomUUID();
 
-// On page load, check if we already have a valid session cookie.
 (async function checkSession() {
   try {
     const resp = await fetch('/v1/auth/me');
-    if (resp.ok) {
-      showChat();
-    }
-  } catch (e) {
-    // No session, show login.
-  }
+    if (resp.ok) showChat();
+  } catch (e) {}
 })();
 
 function showChat() {
@@ -233,15 +324,12 @@ async function authenticate() {
   const email = document.getElementById('email-input').value.trim();
   const password = document.getElementById('password-input').value;
   const errEl = document.getElementById('auth-error');
-
   if (!email || !password) {
-    errEl.textContent = 'Email and password are required.';
+    errEl.textContent = 'email and password required';
     errEl.style.display = 'block';
     return;
   }
-
   errEl.style.display = 'none';
-
   try {
     const resp = await fetch('/v1/auth/login', {
       method: 'POST',
@@ -250,13 +338,13 @@ async function authenticate() {
     });
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      errEl.textContent = data.message || 'Login failed.';
+      errEl.textContent = data.message || 'login failed';
       errEl.style.display = 'block';
       return;
     }
     showChat();
   } catch (e) {
-    errEl.textContent = 'Connection error: ' + e.message;
+    errEl.textContent = 'connection error: ' + e.message;
     errEl.style.display = 'block';
   }
 }
@@ -265,22 +353,16 @@ document.getElementById('password-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') authenticate();
 });
 
-// Auto-resize textarea
 msgInput.addEventListener('input', () => {
   msgInput.style.height = 'auto';
   msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
 });
 
 msgInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    send();
-  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
 
-function scrollToBottom() {
-  chat.scrollTop = chat.scrollHeight;
-}
+function scrollToBottom() { chat.scrollTop = chat.scrollHeight; }
 
 function addMessage(role, content) {
   const div = document.createElement('div');
@@ -292,27 +374,266 @@ function addMessage(role, content) {
 }
 
 function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// --- A2UI Renderer ---
+
+function renderA2UI(jsonStr, container) {
+  try {
+    const surface = JSON.parse(jsonStr);
+    const index = {};
+    for (const c of surface.components) index[c.id] = c;
+    const root = index['root'];
+    if (!root) return false;
+    const el = renderComponent(root, index);
+    if (el) { container.appendChild(el); return true; }
+  } catch (e) {
+    console.error('A2UI parse error:', e);
+  }
+  return false;
+}
+
+function renderComponent(comp, index) {
+  switch (comp.type) {
+    case 'Column': return renderColumn(comp, index);
+    case 'Row': return renderRow(comp, index);
+    case 'DataTable': return renderDataTable(comp);
+    case 'Card': return renderCard(comp, index);
+    case 'Text': return renderText(comp);
+    case 'Divider': return renderDivider();
+    default: return null;
+  }
+}
+
+function renderChildren(comp, index, parent) {
+  if (!comp.children) return;
+  for (const cid of comp.children) {
+    const child = index[cid];
+    if (child) {
+      const el = renderComponent(child, index);
+      if (el) parent.appendChild(el);
+    }
+  }
+}
+
+function renderColumn(comp, index) {
   const div = document.createElement('div');
-  div.textContent = s;
-  return div.innerHTML;
+  div.className = 'a2ui-column';
+  renderChildren(comp, index, div);
+  return div;
+}
+
+function renderRow(comp, index) {
+  const div = document.createElement('div');
+  div.className = 'a2ui-row';
+  renderChildren(comp, index, div);
+  return div;
+}
+
+function renderDataTable(comp) {
+  const p = comp.properties || {};
+  const cols = p.columns || [];
+  const rows = p.rows || [];
+  const table = document.createElement('table');
+  table.className = 'a2ui-datatable';
+  if (p.caption) {
+    const cap = document.createElement('caption');
+    cap.textContent = p.caption;
+    table.appendChild(cap);
+  }
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  for (const col of cols) {
+    const th = document.createElement('th');
+    th.textContent = col.label || col.key;
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    for (const col of cols) {
+      const td = document.createElement('td');
+      const val = row[col.key];
+      td.textContent = val != null ? String(val) : '';
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+function renderCard(comp, index) {
+  const div = document.createElement('div');
+  div.className = 'a2ui-card';
+  const p = comp.properties || {};
+  if (p.title) {
+    const t = document.createElement('div');
+    t.className = 'a2ui-card-title';
+    t.textContent = p.title;
+    div.appendChild(t);
+  }
+  renderChildren(comp, index, div);
+  return div;
+}
+
+function renderText(comp) {
+  const p = comp.properties || {};
+  const span = document.createElement('div');
+  span.className = 'a2ui-text';
+  if (p.label) {
+    const lbl = document.createElement('span');
+    lbl.className = 'a2ui-label';
+    lbl.textContent = p.label;
+    span.appendChild(lbl);
+  }
+  const txt = document.createElement('span');
+  if (p.style === 'bold') txt.className = 'a2ui-text-bold';
+  else if (p.style === 'dim') txt.className = 'a2ui-text-dim';
+  else if (p.style === 'code') txt.className = 'a2ui-text-code';
+  txt.textContent = p.text || '';
+  span.appendChild(txt);
+  return span;
+}
+
+function renderDivider() {
+  const hr = document.createElement('hr');
+  hr.className = 'a2ui-divider';
+  return hr;
+}
+
+// --- Streaming with A2UI detection ---
+
+let activeTextSpan = null;
+
+// Accumulates full text for current assistant turn, used to detect a2ui blocks on done.
+let textAccum = '';
+
+function handleEvent(type, data, container, toolCalls) {
+  switch (type) {
+    case 'text':
+      textAccum += data.text;
+      // Stream text into a span; we'll replace with rendered A2UI on 'done'.
+      if (!activeTextSpan || activeTextSpan.parentNode !== container ||
+          activeTextSpan !== container.lastElementChild) {
+        activeTextSpan = document.createElement('span');
+        activeTextSpan.className = 'text-content';
+        container.appendChild(activeTextSpan);
+      }
+      activeTextSpan.textContent += data.text;
+      break;
+
+    case 'tool_start':
+      activeTextSpan = null;
+      textAccum = '';
+      const toolDiv = document.createElement('div');
+      toolDiv.className = 'tool-call';
+      toolDiv.id = 'tool-' + data.id;
+      toolDiv.innerHTML = '<span class="tool-name">' + escapeHtml(data.tool) + '</span> ...';
+      container.appendChild(toolDiv);
+      toolCalls[data.id] = data.tool;
+      break;
+
+    case 'tool_result': {
+      const el = document.getElementById('tool-' + data.id);
+      if (el) {
+        const name = toolCalls[data.id] || 'tool';
+        if (data.error) {
+          el.className = 'tool-call error';
+          el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> error';
+        } else {
+          el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> done';
+        }
+      }
+      break;
+    }
+
+    case 'error': {
+      const errSpan = document.createElement('span');
+      errSpan.style.color = '#f07070';
+      errSpan.textContent = '\nerror: ' + data.error;
+      container.appendChild(errSpan);
+      break;
+    }
+
+    case 'done':
+      // Re-render accumulated text, replacing text spans with A2UI where found.
+      if (textAccum && textAccum.includes('` + "```a2ui" + `')) {
+        // Remove all text-content spans (keep tool-call divs).
+        const textSpans = container.querySelectorAll('.text-content');
+        textSpans.forEach(s => s.remove());
+        // Split on a2ui fences and render.
+        renderSegments(textAccum, container);
+      }
+      textAccum = '';
+      activeTextSpan = null;
+      break;
+  }
+  scrollToBottom();
+}
+
+function renderSegments(text, container) {
+  const fence = '` + "```a2ui" + `';
+  const closeFence = '` + "```" + `';
+  let pos = 0;
+  while (pos < text.length) {
+    const start = text.indexOf(fence, pos);
+    if (start === -1) {
+      appendTextSegment(text.slice(pos), container);
+      break;
+    }
+    // Text before the fence.
+    if (start > pos) {
+      appendTextSegment(text.slice(pos, start), container);
+    }
+    // Find end of a2ui block.
+    const jsonStart = start + fence.length;
+    // Skip optional newline after fence.
+    const jsonBegin = text[jsonStart] === '\n' ? jsonStart + 1 : jsonStart;
+    const end = text.indexOf(closeFence, jsonBegin);
+    if (end === -1) {
+      // Unclosed fence, render as text.
+      appendTextSegment(text.slice(start), container);
+      break;
+    }
+    const jsonStr = text.slice(jsonBegin, end).trim();
+    if (!renderA2UI(jsonStr, container)) {
+      // Failed to parse, render as text.
+      appendTextSegment(text.slice(start, end + closeFence.length), container);
+    }
+    pos = end + closeFence.length;
+    // Skip optional newline after closing fence.
+    if (text[pos] === '\n') pos++;
+  }
+}
+
+function appendTextSegment(text, container) {
+  if (!text) return;
+  const span = document.createElement('span');
+  span.className = 'text-content';
+  span.textContent = text;
+  container.appendChild(span);
 }
 
 async function send() {
   const text = msgInput.value.trim();
   if (!text) return;
-
   msgInput.value = '';
   msgInput.style.height = 'auto';
   sendBtn.disabled = true;
-
   addMessage('user', text);
 
-  // Create assistant message container
   const assistantDiv = document.createElement('div');
   assistantDiv.className = 'msg assistant';
   chat.appendChild(assistantDiv);
 
-  let currentText = '';
+  textAccum = '';
+  activeTextSpan = null;
   let toolCalls = {};
 
   try {
@@ -321,30 +642,25 @@ async function send() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({session_id: sessionId, message: text})
     });
-
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       if (resp.status === 401) {
-        assistantDiv.textContent = 'Session expired. Please reload and sign in again.';
+        assistantDiv.textContent = 'session expired — reload to sign in again';
       } else {
-        assistantDiv.textContent = 'Error: ' + (err.message || resp.statusText);
+        assistantDiv.textContent = 'error: ' + (err.message || resp.statusText);
       }
       sendBtn.disabled = false;
       return;
     }
-
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-
     while (true) {
       const {done, value} = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, {stream: true});
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete line
-
+      buffer = lines.pop();
       let eventType = '';
       for (const line of lines) {
         if (line.startsWith('event: ')) {
@@ -358,67 +674,13 @@ async function send() {
     }
   } catch (err) {
     if (!assistantDiv.textContent) {
-      assistantDiv.textContent = 'Connection error: ' + err.message;
+      assistantDiv.textContent = 'connection error: ' + err.message;
     }
   }
-
   sendBtn.disabled = false;
   msgInput.focus();
 }
 
-// Track the current text span so new text after tool calls creates a new span
-let activeTextSpan = null;
-
-function handleEvent(type, data, container, toolCalls) {
-  switch (type) {
-    case 'text':
-      // Append to current text span, or create a new one after tool calls
-      if (!activeTextSpan || activeTextSpan.parentNode !== container ||
-          activeTextSpan !== container.lastElementChild) {
-        activeTextSpan = document.createElement('span');
-        activeTextSpan.className = 'text-content';
-        container.appendChild(activeTextSpan);
-      }
-      activeTextSpan.textContent += data.text;
-      break;
-
-    case 'tool_start':
-      activeTextSpan = null; // next text gets a new span
-      const toolDiv = document.createElement('div');
-      toolDiv.className = 'tool-call';
-      toolDiv.id = 'tool-' + data.id;
-      toolDiv.innerHTML = '<span class="tool-name">' + escapeHtml(data.tool) + '</span> ...';
-      container.appendChild(toolDiv);
-      toolCalls[data.id] = data.tool;
-      break;
-
-    case 'tool_result':
-      const el = document.getElementById('tool-' + data.id);
-      if (el) {
-        const name = toolCalls[data.id] || 'tool';
-        if (data.error) {
-          el.className = 'tool-call error';
-          el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> error';
-        } else {
-          el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> done';
-        }
-      }
-      break;
-
-    case 'error':
-      const errSpan = document.createElement('span');
-      errSpan.style.color = '#fca5a5';
-      errSpan.textContent = '\nError: ' + data.error;
-      container.appendChild(errSpan);
-      break;
-
-    case 'done':
-      break;
-  }
-  scrollToBottom();
-}
-
-// Focus input on load
 msgInput.focus();
 </script>
 </body>

@@ -51,4 +51,26 @@ type Backend interface {
 
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)
+
+	ChatStream(ctx context.Context, sessionID, message string) (<-chan ChatEvent, error)
+}
+
+// ChatEvent represents a single SSE event from the chat stream.
+// Fields are populated by the SSE parser, not JSON-unmarshaled directly.
+type ChatEvent struct {
+	Type string // "text", "tool_start", "tool_result", "error", "done"
+
+	// text event
+	Text string
+
+	// tool_start event
+	Tool   string
+	ToolID string
+
+	// tool_result event
+	Result    string
+	ToolError bool
+
+	// error event
+	Error string
 }

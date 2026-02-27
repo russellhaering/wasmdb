@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/russellhaering/wasmdb/internal/cli"
 	"github.com/russellhaering/wasmdb/internal/document"
@@ -246,3 +247,124 @@ func (c *Client) Ready(ctx context.Context) (*cli.HealthStatus, error) {
 	}
 	return &resp, nil
 }
+
+func (c *Client) ChatStream(ctx context.Context, sessionID, message string) (<-chan cli.ChatEvent, error) {
+	body := struct {
+		SessionID string `json:"session_id"`
+		Message   string `json:"message"`
+	}{SessionID: sessionID, Message: message}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/chat", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		var apiErr apiError
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err != nil {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		return nil, &apiErr
+	}
+
+	events := make(chan cli.ChatEvent, 64)
+	go func() {
+		defer close(events)
+		defer resp.Body.Close()
+		parseSSE(resp.Body, events)
+	}()
+
+	return events, nil
+}
+
+// parseSSE reads SSE events from r and sends ChatEvents on ch.
+func parseSSE(r io.Reader, ch chan<- cli.ChatEvent) {
+	buf := make([]byte, 4096)
+	var remainder string
+	var eventType string
+
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			remainder += string(buf[:n])
+			for {
+				idx := strings.Index(remainder, "\n")
+				if idx == -1 {
+					break
+				}
+				line := remainder[:idx]
+				remainder = remainder[idx+1:]
+
+				if strings.HasPrefix(line, "event: ") {
+					eventType = strings.TrimSpace(line[7:])
+				} else if strings.HasPrefix(line, "data: ") && eventType != "" {
+					dataStr := line[6:]
+					evt := cli.ChatEvent{Type: eventType}
+
+					switch eventType {
+					case "text":
+						var d struct {
+							Text string `json:"text"`
+						}
+						if json.Unmarshal([]byte(dataStr), &d) == nil {
+							evt.Text = d.Text
+						}
+					case "tool_start":
+						var d struct {
+							Tool string `json:"tool"`
+							ID   string `json:"id"`
+						}
+						if json.Unmarshal([]byte(dataStr), &d) == nil {
+							evt.Tool = d.Tool
+							evt.ToolID = d.ID
+						}
+					case "tool_result":
+						var d struct {
+							ID     string `json:"id"`
+							Result string `json:"result"`
+							Error  bool   `json:"error"`
+						}
+						if json.Unmarshal([]byte(dataStr), &d) == nil {
+							evt.ToolID = d.ID
+							evt.Result = d.Result
+							evt.ToolError = d.Error
+						}
+					case "error":
+						var d struct {
+							Error string `json:"error"`
+						}
+						if json.Unmarshal([]byte(dataStr), &d) == nil {
+							evt.Error = d.Error
+						}
+					}
+
+					ch <- evt
+					eventType = ""
+
+					if evt.Type == "done" || evt.Type == "error" {
+						return
+					}
+				}
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
