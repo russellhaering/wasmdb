@@ -212,6 +212,82 @@ func TestFreeze(t *testing.T) {
 	})
 }
 
+func TestIteratorFromEmpty(t *testing.T) {
+	m := NewMemTable()
+	it := m.IteratorFrom("anything")
+	if it.Next() {
+		t.Fatal("expected no entries from empty memtable")
+	}
+}
+
+func TestIteratorFromBeginning(t *testing.T) {
+	m := NewMemTable()
+	m.Put("b", []byte("2"), 1)
+	m.Put("c", []byte("3"), 2)
+	m.Put("d", []byte("4"), 3)
+
+	// afterKey="" should return all entries.
+	it := m.IteratorFrom("")
+	var got []string
+	for it.Next() {
+		got = append(got, it.Entry().Key)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(got))
+	}
+}
+
+func TestIteratorFromMiddle(t *testing.T) {
+	m := NewMemTable()
+	for _, k := range []string{"a", "b", "c", "d", "e"} {
+		m.Put(k, []byte(k), 1)
+	}
+
+	// afterKey="b" should return c, d, e.
+	it := m.IteratorFrom("b")
+	var got []string
+	for it.Next() {
+		got = append(got, it.Entry().Key)
+	}
+	expected := []string{"c", "d", "e"}
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d entries, got %d: %v", len(expected), len(got), got)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Fatalf("entry[%d]: expected %q, got %q", i, expected[i], got[i])
+		}
+	}
+}
+
+func TestIteratorFromExactKey(t *testing.T) {
+	m := NewMemTable()
+	for _, k := range []string{"a", "b", "c"} {
+		m.Put(k, []byte(k), 1)
+	}
+
+	// afterKey="b" should NOT include "b" — only entries with key > afterKey.
+	it := m.IteratorFrom("b")
+	var got []string
+	for it.Next() {
+		got = append(got, it.Entry().Key)
+	}
+	if len(got) != 1 || got[0] != "c" {
+		t.Fatalf("expected [c], got %v", got)
+	}
+}
+
+func TestIteratorFromPastEnd(t *testing.T) {
+	m := NewMemTable()
+	m.Put("a", []byte("1"), 1)
+	m.Put("b", []byte("2"), 2)
+
+	it := m.IteratorFrom("z")
+	if it.Next() {
+		t.Fatal("expected no entries when afterKey is past all keys")
+	}
+}
+
 func assertPanics(t *testing.T, name string, fn func()) {
 	t.Helper()
 	defer func() {

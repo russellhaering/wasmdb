@@ -2,9 +2,62 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/russellhaering/wasmdb/internal/document"
 )
+
+type listDocumentsResponse struct {
+	Documents []*document.Document `json:"documents"`
+	HasMore   bool                 `json:"has_more"`
+	NextCursor string              `json:"next_cursor,omitempty"`
+}
+
+func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
+	tableName := r.PathValue("table")
+
+	if isSystem, _ := s.registry.IsSystemTable(r.Context(), tableName); isSystem {
+		writeErrorMsg(w, 403, "forbidden", "direct document access to system tables is not allowed")
+		return
+	}
+
+	table, err := s.registry.GetTable(r.Context(), tableName)
+	if err != nil {
+		writeErrorMsg(w, 404, "not_found", "table not found: "+tableName)
+		return
+	}
+
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	after := r.URL.Query().Get("after")
+
+	docs, hasMore, err := table.ListDocuments(r.Context(), limit, after)
+	if err != nil {
+		writeErrorMsg(w, 500, "internal_error", err.Error())
+		return
+	}
+
+	resp := listDocumentsResponse{
+		Documents: docs,
+		HasMore:   hasMore,
+	}
+	if resp.Documents == nil {
+		resp.Documents = []*document.Document{}
+	}
+	if len(docs) > 0 && hasMore {
+		resp.NextCursor = docs[len(docs)-1].ID
+	}
+
+	writeJSON(w, 200, resp)
+}
 
 type createDocumentRequest struct {
 	ID         string         `json:"id,omitempty"`

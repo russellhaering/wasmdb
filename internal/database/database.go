@@ -398,32 +398,25 @@ func (d *Table) SearchAttributes(ctx context.Context, filters []index.Filter, li
 	return d.fetchDocs(ctx, ids)
 }
 
-// ListDocuments returns up to limit documents starting at offset, scanning the LSM directly.
-func (d *Table) ListDocuments(ctx context.Context, limit, offset int) ([]*document.Document, int, error) {
-	entries, err := d.db.Scan(ctx)
+// ListDocuments returns up to limit documents with key > afterKey using cursor-based pagination.
+// Returns the documents, whether more results exist, and any error.
+func (d *Table) ListDocuments(ctx context.Context, limit int, afterKey string) ([]*document.Document, bool, error) {
+	result, err := d.db.ScanRange(ctx, afterKey, limit)
 	if err != nil {
-		return nil, 0, fmt.Errorf("scan: %w", err)
+		return nil, false, fmt.Errorf("scan range: %w", err)
 	}
 
-	// Filter to non-tombstone entries with valid documents.
-	total := 0
 	var docs []*document.Document
-	for _, entry := range entries {
-		if entry.Value == nil {
+	for _, entry := range result.Entries {
+		doc, err := document.Deserialize(entry.Value)
+		if err != nil {
 			continue
 		}
-		if total >= offset && len(docs) < limit {
-			doc, err := document.Deserialize(entry.Value)
-			if err != nil {
-				continue
-			}
-			doc.ID = entry.Key
-			docs = append(docs, doc)
-		}
-		total++
+		doc.ID = entry.Key
+		docs = append(docs, doc)
 	}
 
-	return docs, total, nil
+	return docs, result.HasMore, nil
 }
 
 func (d *Table) fetchDocs(ctx context.Context, ids []string) ([]*document.Document, error) {

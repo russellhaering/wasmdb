@@ -138,6 +138,15 @@ func (db *DB) Scan(ctx context.Context) ([]Entry, error) {
 	return db.reader.Scan(ctx, active, frozen, manifest)
 }
 
+// ScanRange returns up to limit non-tombstone entries with key > afterKey,
+// using seek-based cursor pagination.
+func (db *DB) ScanRange(ctx context.Context, afterKey string, limit int) (*ScanRangeResult, error) {
+	active := db.writer.ActiveMemTable()
+	frozen := db.writer.FrozenMemTables()
+	manifest := db.writer.CurrentManifest()
+	return db.reader.ScanRange(ctx, afterKey, limit, active, frozen, manifest)
+}
+
 // ScanSince returns all entries (including tombstones) with SeqNum > sinceSeq,
 // skipping SSTables that contain no new data.
 func (db *DB) ScanSince(ctx context.Context, sinceSeq uint64) ([]Entry, error) {

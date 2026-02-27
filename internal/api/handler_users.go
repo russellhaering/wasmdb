@@ -62,16 +62,23 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce email uniqueness by scanning all users.
-	allUsers, _, err := table.ListDocuments(r.Context(), 10000, 0)
-	if err != nil {
-		writeErrorMsg(w, 500, "internal_error", "failed to check email uniqueness")
-		return
-	}
-	for _, u := range allUsers {
-		if e, _ := u.Attributes["email"].(string); e == req.Email {
-			writeErrorMsg(w, 409, "conflict", "a user with this email already exists")
+	afterKey := ""
+	for {
+		pageUsers, hasMore, listErr := table.ListDocuments(r.Context(), 100, afterKey)
+		if listErr != nil {
+			writeErrorMsg(w, 500, "internal_error", "failed to check email uniqueness")
 			return
 		}
+		for _, u := range pageUsers {
+			if e, _ := u.Attributes["email"].(string); e == req.Email {
+				writeErrorMsg(w, 409, "conflict", "a user with this email already exists")
+				return
+			}
+		}
+		if !hasMore || len(pageUsers) == 0 {
+			break
+		}
+		afterKey = pageUsers[len(pageUsers)-1].ID
 	}
 
 	doc := &document.Document{
@@ -96,7 +103,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	docs, _, err := table.ListDocuments(r.Context(), 1000, 0)
+	docs, _, err := table.ListDocuments(r.Context(), 1000, "")
 	if err != nil {
 		writeErrorMsg(w, 500, "internal_error", err.Error())
 		return

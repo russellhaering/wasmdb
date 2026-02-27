@@ -642,7 +642,7 @@ func TestSeedUser(t *testing.T) {
 
 	// Verify only one user exists.
 	table, _ := registry.GetTable(ctx, "_users")
-	docs, _, _ := table.ListDocuments(ctx, 100, 0)
+	docs, _, _ := table.ListDocuments(ctx, 100, "")
 	if len(docs) != 1 {
 		t.Fatalf("expected 1 user, got %d", len(docs))
 	}

@@ -351,6 +351,142 @@ func TestFooterMagicValidation(t *testing.T) {
 	}
 }
 
+func TestSSTableIteratorFromEmpty(t *testing.T) {
+	w := NewSSTableWriter("test-from-empty", DefaultBlockSize)
+	data, _, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	r, err := NewSSTableReader("test-from-empty", data)
+	if err != nil {
+		t.Fatalf("NewSSTableReader: %v", err)
+	}
+
+	it := r.IteratorFrom("anything")
+	if it.Next() {
+		t.Fatal("expected no entries from empty SSTable")
+	}
+}
+
+func TestSSTableIteratorFromBeginning(t *testing.T) {
+	w := NewSSTableWriter("test-from-begin", 64)
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("key-%05d", i)
+		w.Add(Entry{Key: key, Value: []byte(key), SeqNum: uint64(i + 1)})
+	}
+	data, _, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	r, err := NewSSTableReader("test-from-begin", data)
+	if err != nil {
+		t.Fatalf("NewSSTableReader: %v", err)
+	}
+
+	// Empty afterKey should return all entries.
+	it := r.IteratorFrom("")
+	count := 0
+	for it.Next() {
+		count++
+	}
+	if it.Err() != nil {
+		t.Fatalf("unexpected error: %v", it.Err())
+	}
+	if count != 20 {
+		t.Fatalf("expected 20 entries, got %d", count)
+	}
+}
+
+func TestSSTableIteratorFromMiddle(t *testing.T) {
+	// Use tiny block size for multi-block SSTable.
+	w := NewSSTableWriter("test-from-mid", 64)
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("key-%05d", i)
+		w.Add(Entry{Key: key, Value: []byte(key), SeqNum: uint64(i + 1)})
+	}
+	data, _, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	r, err := NewSSTableReader("test-from-mid", data)
+	if err != nil {
+		t.Fatalf("NewSSTableReader: %v", err)
+	}
+
+	// After "key-00024" should give keys 25..49 (25 entries).
+	it := r.IteratorFrom("key-00024")
+	var got []string
+	for it.Next() {
+		got = append(got, it.Entry().Key)
+	}
+	if it.Err() != nil {
+		t.Fatalf("unexpected error: %v", it.Err())
+	}
+	if len(got) != 25 {
+		t.Fatalf("expected 25 entries, got %d", len(got))
+	}
+	if got[0] != "key-00025" {
+		t.Fatalf("expected first key key-00025, got %s", got[0])
+	}
+	if got[len(got)-1] != "key-00049" {
+		t.Fatalf("expected last key key-00049, got %s", got[len(got)-1])
+	}
+}
+
+func TestSSTableIteratorFromPastEnd(t *testing.T) {
+	w := NewSSTableWriter("test-from-past", 64)
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("key-%05d", i)
+		w.Add(Entry{Key: key, Value: []byte(key), SeqNum: uint64(i + 1)})
+	}
+	data, _, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	r, err := NewSSTableReader("test-from-past", data)
+	if err != nil {
+		t.Fatalf("NewSSTableReader: %v", err)
+	}
+
+	it := r.IteratorFrom("zzz")
+	if it.Next() {
+		t.Fatal("expected no entries when afterKey is past all keys")
+	}
+}
+
+func TestSSTableIteratorFromExactKey(t *testing.T) {
+	w := NewSSTableWriter("test-from-exact", 64)
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("key-%05d", i)
+		w.Add(Entry{Key: key, Value: []byte(key), SeqNum: uint64(i + 1)})
+	}
+	data, _, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	r, err := NewSSTableReader("test-from-exact", data)
+	if err != nil {
+		t.Fatalf("NewSSTableReader: %v", err)
+	}
+
+	// Exact key match: should NOT include the afterKey itself.
+	it := r.IteratorFrom("key-00005")
+	var got []string
+	for it.Next() {
+		got = append(got, it.Entry().Key)
+	}
+	if it.Err() != nil {
+		t.Fatalf("unexpected error: %v", it.Err())
+	}
+	// Should get keys 6..9 (4 entries).
+	if len(got) != 4 {
+		t.Fatalf("expected 4 entries, got %d: %v", len(got), got)
+	}
+	if got[0] != "key-00006" {
+		t.Fatalf("expected first key key-00006, got %s", got[0])
+	}
+}
+
 func TestDataTooShortForFooter(t *testing.T) {
 	_, err := NewSSTableReader("bad", make([]byte, 10))
 	if err == nil {

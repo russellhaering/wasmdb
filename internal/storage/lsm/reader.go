@@ -210,6 +210,100 @@ func sortEntries(entries []Entry) {
 	})
 }
 
+// ScanRangeResult holds the results of a cursor-based range scan.
+type ScanRangeResult struct {
+	Entries []Entry
+	HasMore bool
+}
+
+// ScanRange returns up to limit non-tombstone entries with key > afterKey,
+// in sorted key order, using seek-based iteration for efficiency.
+// If afterKey is empty, iteration starts from the beginning.
+func (r *Reader) ScanRange(ctx context.Context, afterKey string, limit int, active *MemTable, frozen []*MemTable, manifest *Manifest) (*ScanRangeResult, error) {
+	var sources []prioritizedIterator
+	priority := 0
+
+	// Active MemTable.
+	sources = append(sources, prioritizedIterator{
+		iter:     active.IteratorFrom(afterKey),
+		priority: priority,
+	})
+	priority++
+
+	// Frozen MemTables (newest first).
+	for _, mt := range frozen {
+		sources = append(sources, prioritizedIterator{
+			iter:     mt.IteratorFrom(afterKey),
+			priority: priority,
+		})
+		priority++
+	}
+
+	// L0 SSTables (newest first).
+	for _, sst := range manifest.L0 {
+		// Skip SSTables entirely if MaxKey <= afterKey.
+		if afterKey != "" && sst.MaxKey <= afterKey {
+			priority++
+			continue
+		}
+
+		reader, err := r.loadSSTable(ctx, sst)
+		if err != nil {
+			return nil, fmt.Errorf("reader: load L0 %s: %w", sst.ID, err)
+		}
+
+		sources = append(sources, prioritizedIterator{
+			iter:     reader.IteratorFrom(afterKey),
+			priority: priority,
+		})
+		priority++
+	}
+
+	// Sorted runs (newest first).
+	for _, run := range manifest.SortedRuns {
+		for _, sst := range run.SSTables {
+			// Skip SSTables entirely if MaxKey <= afterKey.
+			if afterKey != "" && sst.MaxKey <= afterKey {
+				continue
+			}
+
+			reader, err := r.loadSSTable(ctx, sst)
+			if err != nil {
+				return nil, fmt.Errorf("reader: load L%d %s: %w", run.Level, sst.ID, err)
+			}
+
+			sources = append(sources, prioritizedIterator{
+				iter:     reader.IteratorFrom(afterKey),
+				priority: priority,
+			})
+		}
+		priority++
+	}
+
+	// Merge and collect up to limit+1 entries.
+	merge := NewMergeIterator(sources)
+	var entries []Entry
+	for merge.Next() {
+		entries = append(entries, merge.Entry())
+		if len(entries) > limit {
+			break
+		}
+	}
+	if err := merge.Err(); err != nil {
+		return nil, fmt.Errorf("reader: merge: %w", err)
+	}
+
+	hasMore := len(entries) > limit
+	if hasMore {
+		entries = entries[:limit]
+	}
+
+	return &ScanRangeResult{
+		Entries: entries,
+		HasMore: hasMore,
+	}, nil
+}
+
 // ScanSince returns all entries (including tombstones) with SeqNum > sinceSeq,
 // after deduplication. SSTables whose MaxSeq <= sinceSeq are skipped entirely.
 // Unlike Scan, tombstones are included so the caller can handle deletes.

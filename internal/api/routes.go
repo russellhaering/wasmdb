@@ -15,6 +15,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/tables/{table}/schema", s.handleUpdateSchema)
 
 	// Documents.
+	mux.HandleFunc("GET /v1/tables/{table}/documents", s.handleListDocuments)
 	mux.HandleFunc("POST /v1/tables/{table}/documents", s.handleCreateDocument)
 	mux.HandleFunc("POST /v1/tables/{table}/documents/_bulk", s.handleBulkCreateDocuments)
 	mux.HandleFunc("GET /v1/tables/{table}/documents/{id}", s.handleGetDocument)

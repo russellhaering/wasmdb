@@ -200,6 +200,35 @@ func (m *MemTable) Iterator() *MemTableIterator {
 	return &MemTableIterator{entries: entries, pos: -1}
 }
 
+// IteratorFrom returns an iterator positioned before the first entry with
+// key > afterKey. Uses skip-list O(log n) seek. If afterKey is empty, this
+// behaves identically to Iterator().
+func (m *MemTable) IteratorFrom(afterKey string) *MemTableIterator {
+	if afterKey == "" {
+		return m.Iterator()
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Use skip-list levels to seek to the first node with key > afterKey.
+	curr := m.head
+	for level := m.height - 1; level >= 0; level-- {
+		for curr.next[level] != nil && curr.next[level].entry.Key <= afterKey {
+			curr = curr.next[level]
+		}
+	}
+
+	// curr.next[0] is now the first node with key > afterKey (or nil).
+	var entries []Entry
+	nd := curr.next[0]
+	for nd != nil {
+		entries = append(entries, nd.entry)
+		nd = nd.next[0]
+	}
+	return &MemTableIterator{entries: entries, pos: -1}
+}
+
 // Next advances the iterator to the next entry. It returns false when the
 // iterator is exhausted.
 func (it *MemTableIterator) Next() bool {
@@ -211,4 +240,9 @@ func (it *MemTableIterator) Next() bool {
 // have called Next at least once and it must have returned true.
 func (it *MemTableIterator) Entry() Entry {
 	return it.entries[it.pos]
+}
+
+// Err always returns nil for MemTableIterator (iteration is over an in-memory snapshot).
+func (it *MemTableIterator) Err() error {
+	return nil
 }

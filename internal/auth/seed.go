@@ -19,7 +19,7 @@ func SeedUser(ctx context.Context, registry *database.Registry, email, password 
 		return fmt.Errorf("get users table: %w", err)
 	}
 
-	docs, _, err := table.ListDocuments(ctx, 1, 0)
+	docs, _, err := table.ListDocuments(ctx, 1, "")
 	if err != nil {
 		return fmt.Errorf("list users: %w", err)
 	}

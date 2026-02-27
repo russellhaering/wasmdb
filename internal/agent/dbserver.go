@@ -118,9 +118,9 @@ type deleteDocumentInput struct {
 }
 
 type listDocumentsInput struct {
-	Table  string `json:"table" jsonschema:"Table name"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of results (default 20)"`
-	Offset int    `json:"offset,omitempty" jsonschema:"Number of documents to skip for pagination"`
+	Table string `json:"table" jsonschema:"Table name"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of results (default 20)"`
+	After string `json:"after,omitempty" jsonschema:"Cursor: document ID to start after for pagination"`
 }
 
 type searchTextInput struct {
@@ -268,17 +268,21 @@ func (h *dbHandler) listDocuments(ctx context.Context, _ *mcp.CallToolRequest, i
 		limit = 20
 	}
 
-	docs, total, err := db.ListDocuments(ctx, limit, input.Offset)
+	docs, hasMore, err := db.ListDocuments(ctx, limit, input.After)
 	if err != nil {
 		return textError("Failed to list documents: " + err.Error()), nil, nil
 	}
 
-	return jsonResult(map[string]any{
+	result := map[string]any{
 		"documents": docs,
-		"total":     total,
-		"offset":    input.Offset,
+		"has_more":  hasMore,
 		"limit":     limit,
-	}), nil, nil
+	}
+	if len(docs) > 0 && hasMore {
+		result["next_cursor"] = docs[len(docs)-1].ID
+	}
+
+	return jsonResult(result), nil, nil
 }
 
 func (h *dbHandler) searchText(ctx context.Context, _ *mcp.CallToolRequest, input searchTextInput) (*mcp.CallToolResult, any, error) {

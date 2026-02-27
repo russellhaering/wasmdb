@@ -405,6 +405,53 @@ func (r *SSTableReader) Iterator() *SSTableIterator {
 	}
 }
 
+// IteratorFrom returns an iterator positioned before the first entry with
+// key > afterKey. Uses binary search on the index to find the right block,
+// then scans within the block past afterKey. If afterKey is empty, this
+// behaves identically to Iterator().
+func (r *SSTableReader) IteratorFrom(afterKey string) *SSTableIterator {
+	if afterKey == "" || len(r.index) == 0 {
+		return r.Iterator()
+	}
+
+	// Binary search: find the last block whose FirstKey <= afterKey.
+	blockIdx := sort.Search(len(r.index), func(i int) bool {
+		return r.index[i].FirstKey > afterKey
+	}) - 1
+
+	if blockIdx < 0 {
+		// All blocks have FirstKey > afterKey, so start from the beginning.
+		return r.Iterator()
+	}
+
+	// Scan within the block to find the first entry with key > afterKey.
+	ie := r.index[blockIdx]
+	block := r.data[ie.Offset : ie.Offset+ie.Size]
+	off := 0
+	for off < len(block) {
+		e, n, err := decodeEntry(block, off)
+		if err != nil {
+			return &SSTableIterator{reader: r, blockIdx: len(r.index), err: err}
+		}
+		if e.Key > afterKey {
+			// Position the iterator here.
+			return &SSTableIterator{
+				reader:   r,
+				blockIdx: blockIdx,
+				blockOff: off,
+			}
+		}
+		off += n
+	}
+
+	// All entries in this block have key <= afterKey, start from next block.
+	return &SSTableIterator{
+		reader:   r,
+		blockIdx: blockIdx + 1,
+		blockOff: 0,
+	}
+}
+
 // ---------- SSTableIterator ----------
 
 // SSTableIterator iterates over SSTable entries in sorted order.
@@ -448,6 +495,11 @@ func (it *SSTableIterator) Next() bool {
 // Entry returns the current entry. Only valid after a successful call to Next.
 func (it *SSTableIterator) Entry() Entry {
 	return it.current
+}
+
+// Err returns any error encountered during iteration.
+func (it *SSTableIterator) Err() error {
+	return it.err
 }
 
 // ---------- Encoding helpers ----------
