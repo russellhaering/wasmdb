@@ -68,6 +68,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/chat/sessions", s.handleListChatSessions)
 	mux.HandleFunc("DELETE /v1/chat/sessions/{id}", s.handleDeleteChatSession)
 
+	// Memories.
+	mux.HandleFunc("POST /v1/memories", s.handleCreateMemory)
+	mux.HandleFunc("GET /v1/memories", s.handleListMemories)
+	mux.HandleFunc("GET /v1/memories/{id}", s.handleGetMemory)
+	mux.HandleFunc("PUT /v1/memories/{id}", s.handleUpdateMemory)
+	mux.HandleFunc("DELETE /v1/memories/{id}", s.handleDeleteMemory)
+	mux.HandleFunc("GET /v1/memories/catalog", s.handleMemoryCatalog)
+
 	// Health.
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)

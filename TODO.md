@@ -20,8 +20,8 @@ JavaScript functions execute in a QuickJS-in-Wasm sandbox (via `github.com/fasts
 ## Agents, Skills & Memories 🟡
 Introduce first-class concepts of "agents", "skills", and "memories", all stored in the database (likely as system tables). Agents are configurable AI actors; skills define reusable capabilities an agent can invoke; memories are persistent context that agents accumulate over time and can recall in future interactions.
 
-**Done (skills):** `_skills` system table, skills store (`internal/skills`) with CRUD + execute (via linked stored function), REST API (`POST/GET/PUT/DELETE /v1/skills`, `POST /v1/skills/{name}/exec`), CLI commands (`skill create/list/get/update/delete/exec`), and agent `manage_skill` tool.
-**Remaining:** Agent and memory first-class models + APIs.
+**Done (skills):** `_skills` system table, skills store (`internal/skills`) with CRUD + execute (via linked stored function), REST API (`POST/GET/PUT/DELETE /v1/skills`, `POST /v1/skills/{name}/exec`), CLI commands (`skill create/list/get/update/delete/exec`), agent `manage_skill` + progressive-disclosure tools (`list_skills_catalog`, `get_skill_detail`), compact catalog injection in chat, and manual-only skill control (`disable_model_invocation`).
+**Remaining:** Skill selection/ranking heuristic for catalog budgeting at scale, plus agent and memory first-class models + APIs.
 
 ## Agent MCP Server Configuration
 Allow MCP servers to be configured per-agent via a system table. This lets each agent have its own set of external tool integrations (e.g. Slack, GitHub, databases) without hardcoding them in the server config.

@@ -18,6 +18,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
 )
 
@@ -162,7 +163,19 @@ Skill routing rules:
 - If a skill is manual-only, never auto-invoke it; ask the user to confirm and then invoke.
 - If no skill clearly matches, proceed with normal tools.
 
-Use manage_skill to create/update/get/list/delete/exec skills.`
+Use manage_skill to create/update/get/list/delete/exec skills.
+
+## Memories (Progressive Disclosure)
+
+Use memory with progressive disclosure:
+- First call list_memory_catalog with user_id to discover compact entries.
+- Fetch full memory only when needed via get_memory_detail.
+- Persist durable context via manage_memory action=create/update/pin.
+
+Guidelines:
+- Store stable user preferences and long-lived facts as memory.
+- Keep memory summaries concise and specific.
+- Retrieve memories selectively based on relevance, not all at once.`
 
 const maxCachedSessions = 100
 
@@ -215,7 +228,8 @@ func NewChatManager(ctx context.Context, cfg ChatConfig) (*ChatManager, error) {
 
 	servers := mcpx.NewServerGroup()
 	skillStore := skills.NewStore(cfg.Registry, cfg.FnStore, cfg.FnEngine)
-	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore, skillStore, subAgentModel, cfg.AnthropicAPIKey))
+	memoryStore := memory.NewStore(cfg.Registry)
+	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore, skillStore, memoryStore, subAgentModel, cfg.AnthropicAPIKey))
 
 	if err := servers.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("connecting MCP servers: %w", err)
@@ -400,9 +414,16 @@ func (cm *ChatManager) StreamMessage(ctx context.Context, sessionID, userID, mes
 		defer close(events)
 		defer cs.mu.Unlock()
 
-		prompt := message
+		prompt := fmt.Sprintf("Authenticated user_id: %s\n\nUser request:\n%s", userID, message)
+		prefix := ""
 		if catalog := cm.buildSkillsCatalogPrompt(ctx); catalog != "" {
-			prompt = catalog + "\n\nUser request:\n" + message
+			prefix += catalog + "\n"
+		}
+		if mem := cm.buildMemoryCatalogPrompt(ctx, userID); mem != "" {
+			prefix += mem + "\n"
+		}
+		if prefix != "" {
+			prompt = fmt.Sprintf("Authenticated user_id: %s\n\n%s\nUser request:\n%s", userID, prefix, message)
 		}
 
 		session, err := cm.agent.NewSessionWithHistory(ctx, cs.history, prompt)
@@ -550,6 +571,34 @@ func (cm *ChatManager) buildSkillsCatalogPrompt(ctx context.Context) string {
 		b.WriteString(line)
 	}
 
+	if b.Len() == 0 {
+		return ""
+	}
+	return b.String()
+}
+
+// buildMemoryCatalogPrompt injects compact memory metadata (no full body) for
+// Claude-style progressive disclosure.
+func (cm *ChatManager) buildMemoryCatalogPrompt(ctx context.Context, userID string) string {
+	if userID == "" {
+		return ""
+	}
+	store := memory.NewStore(cm.registry)
+	entries, err := store.ListCatalog(ctx, userID, 20)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+
+	const maxChars = 3000
+	var b strings.Builder
+	b.WriteString("Memory catalog (compact; fetch detail only when needed):\n")
+	for _, e := range entries {
+		line := fmt.Sprintf("- %s [%s, pinned=%t, tags=%v]: %s\n", e.ID, e.Scope, e.Pinned, e.Tags, e.Summary)
+		if b.Len()+len(line) > maxChars {
+			break
+		}
+		b.WriteString(line)
+	}
 	if b.Len() == 0 {
 		return ""
 	}

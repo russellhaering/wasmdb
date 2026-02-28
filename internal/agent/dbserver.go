@@ -16,17 +16,18 @@ import (
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
 )
 
 // NewTableServer creates an MCP server exposing wasmdb table operations as tools.
-func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store, skillStore *skills.Store, subAgentModel, anthropicAPIKey string) *mcp.Server {
+func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store, skillStore *skills.Store, memoryStore *memory.Store, subAgentModel, anthropicAPIKey string) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "wasmdb-table",
 		Version: "v0.1.0",
 	}, nil)
 
-	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
+	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, memoryStore: memoryStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_tables",
@@ -104,6 +105,21 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 	}, h.manageSkill)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_memory_catalog",
+		Description: "List compact memory entries for the current user (progressive disclosure).",
+	}, h.listMemoryCatalog)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_memory_detail",
+		Description: "Get full detail for a memory by ID and mark it used.",
+	}, h.getMemoryDetail)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "manage_memory",
+		Description: "Create, update, delete, or pin memories. Use this to persist important user preferences and context across sessions.",
+	}, h.manageMemory)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name: "delegate_subagent",
 		Description: "Delegate a focused sub-task to a one-level-deep sub-agent with optional model override. " +
 			"Use this for research/summarization/planning when isolating context helps. " +
@@ -118,6 +134,7 @@ type dbHandler struct {
 	fnEngine        *functions.Engine
 	fnStore         *functions.Store
 	skillStore      *skills.Store
+	memoryStore     *memory.Store
 	subAgentModel   string
 	anthropicAPIKey string
 }
@@ -404,6 +421,27 @@ type getSkillDetailInput struct {
 	Name string `json:"name" jsonschema:"Skill name"`
 }
 
+type listMemoryCatalogInput struct {
+	UserID string `json:"user_id" jsonschema:"Authenticated user ID"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum memories to return (default 25)"`
+}
+
+type getMemoryDetailInput struct {
+	UserID string `json:"user_id" jsonschema:"Authenticated user ID"`
+	ID     string `json:"id" jsonschema:"Memory ID"`
+}
+
+type manageMemoryInput struct {
+	UserID  string   `json:"user_id" jsonschema:"Authenticated user ID"`
+	Action  string   `json:"action" jsonschema:"Action: create, update, delete, or pin"`
+	ID      string   `json:"id,omitempty" jsonschema:"Memory ID (required for update/delete/pin)"`
+	Title   string   `json:"title,omitempty" jsonschema:"Memory title"`
+	Summary string   `json:"summary,omitempty" jsonschema:"Memory summary text"`
+	Scope   string   `json:"scope,omitempty" jsonschema:"Memory scope: user or session"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"Optional tags"`
+	Pinned  bool     `json:"pinned,omitempty" jsonschema:"Pinned flag for create/update/pin"`
+}
+
 type delegateSubagentInput struct {
 	Task     string `json:"task" jsonschema:"Task for the sub-agent to execute"`
 	Model    string `json:"model,omitempty" jsonschema:"Optional model override for sub-agent (defaults to WASMDB_SUBAGENT_MODEL or parent model)"`
@@ -609,6 +647,125 @@ func jsonResult(v any) *mcp.CallToolResult {
 	}
 }
 
+func (h *dbHandler) listMemoryCatalog(ctx context.Context, _ *mcp.CallToolRequest, input listMemoryCatalogInput) (*mcp.CallToolResult, any, error) {
+	if h.memoryStore == nil {
+		return textError("Memory storage is not available."), nil, nil
+	}
+	if input.UserID == "" {
+		return textError("user_id is required"), nil, nil
+	}
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 25
+	}
+	entries, err := h.memoryStore.ListCatalog(ctx, input.UserID, limit)
+	if err != nil {
+		return textError("Failed to list memory catalog: " + err.Error()), nil, nil
+	}
+	if len(entries) == 0 {
+		return textResult("No memories found."), nil, nil
+	}
+	return jsonResult(entries), nil, nil
+}
+
+func (h *dbHandler) getMemoryDetail(ctx context.Context, _ *mcp.CallToolRequest, input getMemoryDetailInput) (*mcp.CallToolResult, any, error) {
+	if h.memoryStore == nil {
+		return textError("Memory storage is not available."), nil, nil
+	}
+	if input.UserID == "" || input.ID == "" {
+		return textError("user_id and id are required"), nil, nil
+	}
+	m, err := h.memoryStore.Get(ctx, input.ID)
+	if err != nil {
+		return textError("Failed to get memory: " + err.Error()), nil, nil
+	}
+	if m == nil || m.UserID != input.UserID {
+		return textError("Memory not found: " + input.ID), nil, nil
+	}
+	_ = h.memoryStore.Touch(ctx, m.ID)
+	return jsonResult(m), nil, nil
+}
+
+func (h *dbHandler) manageMemory(ctx context.Context, _ *mcp.CallToolRequest, input manageMemoryInput) (*mcp.CallToolResult, any, error) {
+	if h.memoryStore == nil {
+		return textError("Memory storage is not available."), nil, nil
+	}
+	if input.UserID == "" {
+		return textError("user_id is required"), nil, nil
+	}
+
+	switch input.Action {
+	case "create":
+		m, err := h.memoryStore.Create(ctx, &memory.Memory{
+			UserID:  input.UserID,
+			Scope:   input.Scope,
+			Title:   input.Title,
+			Summary: input.Summary,
+			Tags:    input.Tags,
+			Pinned:  input.Pinned,
+		})
+		if err != nil {
+			return textError("Failed to create memory: " + err.Error()), nil, nil
+		}
+		return jsonResult(m), nil, nil
+	case "update":
+		if input.ID == "" {
+			return textError("id is required for update"), nil, nil
+		}
+		cur, err := h.memoryStore.Get(ctx, input.ID)
+		if err != nil {
+			return textError("Failed to get memory: " + err.Error()), nil, nil
+		}
+		if cur == nil || cur.UserID != input.UserID {
+			return textError("Memory not found: " + input.ID), nil, nil
+		}
+		m, err := h.memoryStore.Update(ctx, input.ID, &memory.Memory{
+			Scope:   input.Scope,
+			Title:   input.Title,
+			Summary: input.Summary,
+			Tags:    input.Tags,
+			Pinned:  input.Pinned,
+		})
+		if err != nil {
+			return textError("Failed to update memory: " + err.Error()), nil, nil
+		}
+		return jsonResult(m), nil, nil
+	case "delete":
+		if input.ID == "" {
+			return textError("id is required for delete"), nil, nil
+		}
+		cur, err := h.memoryStore.Get(ctx, input.ID)
+		if err != nil {
+			return textError("Failed to get memory: " + err.Error()), nil, nil
+		}
+		if cur == nil || cur.UserID != input.UserID {
+			return textError("Memory not found: " + input.ID), nil, nil
+		}
+		if err := h.memoryStore.Delete(ctx, input.ID); err != nil {
+			return textError("Failed to delete memory: " + err.Error()), nil, nil
+		}
+		return textResult(fmt.Sprintf("Memory %q deleted successfully.", input.ID)), nil, nil
+	case "pin":
+		if input.ID == "" {
+			return textError("id is required for pin"), nil, nil
+		}
+		cur, err := h.memoryStore.Get(ctx, input.ID)
+		if err != nil {
+			return textError("Failed to get memory: " + err.Error()), nil, nil
+		}
+		if cur == nil || cur.UserID != input.UserID {
+			return textError("Memory not found: " + input.ID), nil, nil
+		}
+		m, err := h.memoryStore.Update(ctx, input.ID, &memory.Memory{Pinned: input.Pinned})
+		if err != nil {
+			return textError("Failed to pin memory: " + err.Error()), nil, nil
+		}
+		return jsonResult(m), nil, nil
+	default:
+		return textError("Unknown action: " + input.Action + ". Use create, update, delete, or pin."), nil, nil
+	}
+}
+
 func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolRequest, input delegateSubagentInput) (*mcp.CallToolResult, any, error) {
 	if strings.TrimSpace(input.Task) == "" {
 		return textError("task is required"), nil, nil
@@ -636,7 +793,7 @@ func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolReque
 		maxTurns = 20
 	}
 
-	sg := mcpxSingleServerGroup(NewTableServer(h.registry, h.fnEngine, h.fnStore, h.skillStore, h.subAgentModel, h.anthropicAPIKey))
+	sg := mcpxSingleServerGroup(NewTableServer(h.registry, h.fnEngine, h.fnStore, h.skillStore, h.memoryStore, h.subAgentModel, h.anthropicAPIKey))
 	defer sg.Close()
 	if err := sg.Connect(ctx); err != nil {
 		return textError("failed to start sub-agent tools: " + err.Error()), nil, nil

@@ -58,4 +58,19 @@ var SystemTables = []SystemTableDef{
 			},
 		},
 	},
+	{
+		Name: "_memories",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "user_id", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "scope", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "title", Type: document.FieldTypeString, Indexed: true},
+				{Name: "summary", Type: document.FieldTypeString},
+				{Name: "tags", Type: document.FieldTypeStringSlice, Indexed: true},
+				{Name: "pinned", Type: document.FieldTypeBool, Indexed: true},
+				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+				{Name: "last_used_at", Type: document.FieldTypeDatetime, Indexed: true},
+			},
+		},
+	},
 }

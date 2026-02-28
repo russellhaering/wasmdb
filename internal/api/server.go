@@ -13,6 +13,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/auth"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/functions"
+	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
 )
 
@@ -36,6 +37,7 @@ type Server struct {
 	fnEngine    *functions.Engine
 	fnStore     *functions.Store
 	skillStore  *skills.Store
+	memoryStore *memory.Store
 }
 
 // ServerConfig configures the API server.
@@ -53,11 +55,12 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	fnStore := functions.NewStore(cfg.Registry)
 
 	s := &Server{
-		registry:   cfg.Registry,
-		sessions:   auth.NewSessionManager(cfg.Registry),
-		fnEngine:   fnEngine,
-		fnStore:    fnStore,
-		skillStore: skills.NewStore(cfg.Registry, fnStore, fnEngine),
+		registry:    cfg.Registry,
+		sessions:    auth.NewSessionManager(cfg.Registry),
+		fnEngine:    fnEngine,
+		fnStore:     fnStore,
+		skillStore:  skills.NewStore(cfg.Registry, fnStore, fnEngine),
+		memoryStore: memory.NewStore(cfg.Registry),
 	}
 
 	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)

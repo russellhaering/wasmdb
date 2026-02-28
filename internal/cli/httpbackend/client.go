@@ -521,3 +521,55 @@ func (c *Client) ExecSkill(ctx context.Context, name string, params map[string]a
 	}
 	return &resp, nil
 }
+
+func (c *Client) CreateMemory(ctx context.Context, scope, title, summary string, tags []string, pinned bool) (*cli.MemoryInfo, error) {
+	body := struct {
+		Scope   string   `json:"scope"`
+		Title   string   `json:"title"`
+		Summary string   `json:"summary"`
+		Tags    []string `json:"tags,omitempty"`
+		Pinned  bool     `json:"pinned"`
+	}{Scope: scope, Title: title, Summary: summary, Tags: tags, Pinned: pinned}
+
+	var resp cli.MemoryInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/memories", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListMemories(ctx context.Context) ([]cli.MemoryCatalogEntry, error) {
+	var resp []cli.MemoryCatalogEntry
+	if err := c.do(ctx, http.MethodGet, "/v1/memories", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) GetMemory(ctx context.Context, id string) (*cli.MemoryInfo, error) {
+	var resp cli.MemoryInfo
+	if err := c.do(ctx, http.MethodGet, "/v1/memories/"+id, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateMemory(ctx context.Context, id, scope, title, summary string, tags []string, pinned bool) (*cli.MemoryInfo, error) {
+	body := struct {
+		Scope   string   `json:"scope"`
+		Title   string   `json:"title"`
+		Summary string   `json:"summary"`
+		Tags    []string `json:"tags,omitempty"`
+		Pinned  bool     `json:"pinned"`
+	}{Scope: scope, Title: title, Summary: summary, Tags: tags, Pinned: pinned}
+
+	var resp cli.MemoryInfo
+	if err := c.do(ctx, http.MethodPut, "/v1/memories/"+id, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteMemory(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/memories/"+id, nil, nil)
+}

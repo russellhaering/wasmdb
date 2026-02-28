@@ -141,6 +141,12 @@ type Backend interface {
 	DeleteSkill(ctx context.Context, name string) error
 	ExecSkill(ctx context.Context, name string, params map[string]any) (*ExecResult, error)
 
+	CreateMemory(ctx context.Context, scope, title, summary string, tags []string, pinned bool) (*MemoryInfo, error)
+	ListMemories(ctx context.Context) ([]MemoryCatalogEntry, error)
+	GetMemory(ctx context.Context, id string) (*MemoryInfo, error)
+	UpdateMemory(ctx context.Context, id, scope, title, summary string, tags []string, pinned bool) (*MemoryInfo, error)
+	DeleteMemory(ctx context.Context, id string) error
+
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)
 
@@ -149,6 +155,31 @@ type Backend interface {
 
 // ChatEvent represents a single SSE event from the chat stream.
 // Fields are populated by the SSE parser, not JSON-unmarshaled directly.
+// MemoryInfo holds memory details.
+type MemoryInfo struct {
+	ID         string   `json:"id"`
+	UserID     string   `json:"user_id"`
+	Scope      string   `json:"scope"`
+	Title      string   `json:"title"`
+	Summary    string   `json:"summary"`
+	Tags       []string `json:"tags,omitempty"`
+	Pinned     bool     `json:"pinned,omitempty"`
+	CreatedAt  string   `json:"created_at"`
+	UpdatedAt  string   `json:"updated_at"`
+	LastUsedAt string   `json:"last_used_at,omitempty"`
+}
+
+// MemoryCatalogEntry is compact memory metadata.
+type MemoryCatalogEntry struct {
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Summary   string   `json:"summary"`
+	Scope     string   `json:"scope"`
+	Tags      []string `json:"tags,omitempty"`
+	Pinned    bool     `json:"pinned,omitempty"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
 type ChatEvent struct {
 	Type string // "text", "tool_start", "tool_result", "error", "done"
 
