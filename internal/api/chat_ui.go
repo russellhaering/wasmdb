@@ -51,6 +51,87 @@ const chatHTML = `<!DOCTYPE html>
     border-bottom: 1px solid #333;
     margin-left: 8px;
   }
+  /* Main layout with sidebar */
+  #main-container {
+    flex: 1;
+    display: none;
+    flex-direction: row;
+    overflow: hidden;
+  }
+  #sidebar {
+    width: 240px;
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    background: #0d0d0d;
+    flex-shrink: 0;
+  }
+  #sidebar-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid #222;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #sidebar-header span {
+    color: #606060;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  #new-chat-btn {
+    background: transparent;
+    border: 1px solid #333;
+    color: #4ec94e;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  #new-chat-btn:hover { background: #1a1a1a; }
+  #session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  #session-list::-webkit-scrollbar { width: 4px; }
+  #session-list::-webkit-scrollbar-track { background: transparent; }
+  #session-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .session-item {
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #808080;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .session-item:hover { background: #1a1a1a; color: #b0b0b0; }
+  .session-item.active { color: #4ec94e; background: #111; }
+  .session-item .session-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+  .session-item .session-delete {
+    display: none;
+    color: #606060;
+    font-size: 11px;
+    padding: 0 4px;
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .session-item:hover .session-delete { display: inline; }
+  .session-item .session-delete:hover { color: #f07070; }
+  #chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
   #chat {
     flex: 1;
     overflow-y: auto;
@@ -309,17 +390,28 @@ const chatHTML = `<!DOCTYPE html>
   </div>
 </div>
 
-<div id="chat" style="display:none;"></div>
-<div id="input-area" style="display:none;">
-  <span class="prompt-char">$</span>
-  <textarea id="msg" placeholder="ask about your databases..." rows="1"></textarea>
-  <button id="send" onclick="send()">send</button>
+<div id="main-container">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span>sessions</span>
+      <button id="new-chat-btn" onclick="startNewSession()">+ new</button>
+    </div>
+    <div id="session-list"></div>
+  </div>
+  <div id="chat-area">
+    <div id="chat"></div>
+    <div id="input-area">
+      <span class="prompt-char">$</span>
+      <textarea id="msg" placeholder="ask about your databases..." rows="1"></textarea>
+      <button id="send" onclick="send()">send</button>
+    </div>
+  </div>
 </div>
 <script>
 const chat = document.getElementById('chat');
 const msgInput = document.getElementById('msg');
 const sendBtn = document.getElementById('send');
-const sessionId = crypto.randomUUID();
+let sessionId = null; // Will be set by server or when loading a session
 
 (async function checkSession() {
   try {
@@ -330,9 +422,79 @@ const sessionId = crypto.randomUUID();
 
 function showChat() {
   document.getElementById('auth-screen').style.display = 'none';
-  chat.style.display = 'flex';
-  document.getElementById('input-area').style.display = 'flex';
+  document.getElementById('main-container').style.display = 'flex';
+  loadSessions();
   msgInput.focus();
+}
+
+async function loadSessions() {
+  try {
+    const resp = await fetch('/v1/chat/sessions');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderSessionList(data.sessions || []);
+  } catch (e) {
+    console.error('Failed to load sessions:', e);
+  }
+}
+
+function renderSessionList(sessions) {
+  const list = document.getElementById('session-list');
+  list.innerHTML = '';
+  for (const s of sessions) {
+    const div = document.createElement('div');
+    div.className = 'session-item' + (s.id === sessionId ? ' active' : '');
+    div.dataset.id = s.id;
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'session-title';
+    titleSpan.textContent = s.title || 'New Chat';
+    titleSpan.title = s.title || 'New Chat';
+    div.appendChild(titleSpan);
+
+    const delBtn = document.createElement('span');
+    delBtn.className = 'session-delete';
+    delBtn.textContent = '×';
+    delBtn.onclick = (e) => { e.stopPropagation(); deleteSession(s.id); };
+    div.appendChild(delBtn);
+
+    div.onclick = () => switchToSession(s.id);
+    list.appendChild(div);
+  }
+}
+
+function startNewSession() {
+  sessionId = null;
+  chat.innerHTML = '';
+  // Deselect all sidebar items.
+  document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
+  msgInput.focus();
+}
+
+async function switchToSession(id) {
+  sessionId = id;
+  chat.innerHTML = '';
+  // Update active state in sidebar.
+  document.querySelectorAll('.session-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === id);
+  });
+  // TODO: load and display session history from server.
+  // For now, new messages in the session will continue from where the server left off.
+  const placeholder = document.createElement('div');
+  placeholder.className = 'msg system';
+  placeholder.textContent = 'session restored — type to continue the conversation';
+  chat.appendChild(placeholder);
+  msgInput.focus();
+}
+
+async function deleteSession(id) {
+  try {
+    await fetch('/v1/chat/sessions/' + encodeURIComponent(id), { method: 'DELETE' });
+    if (id === sessionId) startNewSession();
+    loadSessions();
+  } catch (e) {
+    console.error('Failed to delete session:', e);
+  }
 }
 
 async function authenticate() {
@@ -664,10 +826,12 @@ async function send() {
   scrollToBottom();
 
   try {
+    const body = {message: text};
+    if (sessionId) body.session_id = sessionId;
     const resp = await fetch('/v1/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({session_id: sessionId, message: text})
+      body: JSON.stringify(body)
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -694,7 +858,12 @@ async function send() {
           eventType = line.slice(7);
         } else if (line.startsWith('data: ') && eventType) {
           const data = JSON.parse(line.slice(6));
-          handleEvent(eventType, data, assistantDiv, toolCalls);
+          if (eventType === 'session' && data.session_id) {
+            sessionId = data.session_id;
+            // Refresh sidebar to show the new session once done.
+          } else {
+            handleEvent(eventType, data, assistantDiv, toolCalls);
+          }
           eventType = '';
         }
       }
@@ -706,6 +875,8 @@ async function send() {
   }
   sendBtn.disabled = false;
   msgInput.focus();
+  // Refresh session list after message completes (persistence is async).
+  setTimeout(loadSessions, 500);
 }
 
 msgInput.focus();

@@ -2,14 +2,20 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/oklog/ulid/v2"
 	"github.com/russellhaering/wasmdb/internal/autobot/agent"
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
 	"github.com/russellhaering/wasmdb/internal/database"
+	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/wasmdb/internal/index"
 )
 
 const systemPrompt = `You are a helpful assistant for WasmDB, a document-oriented database.
@@ -111,6 +117,15 @@ Search results with summary:
 - Conversational responses or explanations
 - When there is no structured data to display`
 
+const maxCachedSessions = 100
+
+// ChatSessionInfo holds metadata about a chat session for listing.
+type ChatSessionInfo struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // ChatConfig holds configuration for the chat agent.
 type ChatConfig struct {
 	AnthropicAPIKey string
@@ -120,15 +135,19 @@ type ChatConfig struct {
 
 // ChatManager manages chat sessions for the web interface.
 type ChatManager struct {
-	agent   *agent.Agent
-	servers *mcpx.ServerGroup
+	agent    *agent.Agent
+	servers  *mcpx.ServerGroup
+	registry *database.Registry
 
 	mu       sync.Mutex
 	sessions map[string]*chatSession
+	// accessOrder tracks LRU order for cache eviction (most recent at end).
+	accessOrder []string
 }
 
 type chatSession struct {
 	mu      sync.Mutex
+	userID  string
 	history []anthropic.MessageParam
 }
 
@@ -157,6 +176,7 @@ func NewChatManager(ctx context.Context, cfg ChatConfig) (*ChatManager, error) {
 	return &ChatManager{
 		agent:    a,
 		servers:  servers,
+		registry: cfg.Registry,
 		sessions: make(map[string]*chatSession),
 	}, nil
 }
@@ -166,22 +186,155 @@ func (cm *ChatManager) Close() {
 	cm.servers.Close()
 }
 
+// GenerateSessionID creates a new ULID-based session ID.
+func GenerateSessionID() string {
+	return ulid.Make().String()
+}
+
+// touchSession updates LRU tracking for a session and evicts if over capacity.
+// Must be called with cm.mu held.
+func (cm *ChatManager) touchSession(sessionID string) {
+	// Remove from current position in access order.
+	for i, id := range cm.accessOrder {
+		if id == sessionID {
+			cm.accessOrder = append(cm.accessOrder[:i], cm.accessOrder[i+1:]...)
+			break
+		}
+	}
+	// Add to end (most recently used).
+	cm.accessOrder = append(cm.accessOrder, sessionID)
+
+	// Evict oldest if over capacity.
+	for len(cm.accessOrder) > maxCachedSessions {
+		evictID := cm.accessOrder[0]
+		cm.accessOrder = cm.accessOrder[1:]
+		delete(cm.sessions, evictID)
+	}
+}
+
 // getOrCreateSession returns an existing session or creates a new one.
-func (cm *ChatManager) getOrCreateSession(sessionID string) *chatSession {
+// If the session exists in DB but not in memory, it is loaded from DB.
+func (cm *ChatManager) getOrCreateSession(ctx context.Context, sessionID, userID string) (*chatSession, error) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	s, ok := cm.sessions[sessionID]
-	if !ok {
-		s = &chatSession{}
-		cm.sessions[sessionID] = s
+	if s, ok := cm.sessions[sessionID]; ok {
+		cm.touchSession(sessionID)
+		return s, nil
 	}
-	return s
+
+	// Try loading from DB.
+	s, err := cm.loadSession(ctx, sessionID)
+	if err != nil {
+		slog.Warn("failed to load chat session from DB", "session", sessionID, "err", err)
+		// Fall through to create a new in-memory session.
+	}
+
+	if s == nil {
+		s = &chatSession{userID: userID}
+	}
+	s.userID = userID
+
+	cm.sessions[sessionID] = s
+	cm.touchSession(sessionID)
+	return s, nil
+}
+
+// loadSession loads a chat session's history from the _chat_sessions table.
+func (cm *ChatManager) loadSession(ctx context.Context, sessionID string) (*chatSession, error) {
+	table, err := cm.registry.GetTable(ctx, "_chat_sessions")
+	if err != nil {
+		return nil, fmt.Errorf("get chat_sessions table: %w", err)
+	}
+
+	doc, err := table.GetDocument(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get document: %w", err)
+	}
+	if doc == nil {
+		return nil, nil
+	}
+
+	var history []anthropic.MessageParam
+	if doc.Content != "" {
+		if err := json.Unmarshal([]byte(doc.Content), &history); err != nil {
+			return nil, fmt.Errorf("unmarshal history: %w", err)
+		}
+	}
+
+	userID, _ := doc.Attributes["user_id"].(string)
+
+	return &chatSession{
+		userID:  userID,
+		history: history,
+	}, nil
+}
+
+// saveSession persists a chat session to the _chat_sessions table.
+func (cm *ChatManager) saveSession(ctx context.Context, sessionID string, cs *chatSession) error {
+	table, err := cm.registry.GetTable(ctx, "_chat_sessions")
+	if err != nil {
+		return fmt.Errorf("get chat_sessions table: %w", err)
+	}
+
+	historyJSON, err := json.Marshal(cs.history)
+	if err != nil {
+		return fmt.Errorf("marshal history: %w", err)
+	}
+
+	title := extractTitle(cs.history)
+	now := time.Now().UTC()
+
+	doc := &document.Document{
+		ID:      sessionID,
+		Content: string(historyJSON),
+		Attributes: map[string]any{
+			"user_id":    cs.userID,
+			"title":      title,
+			"updated_at": now.Format(time.RFC3339),
+		},
+	}
+
+	if err := table.PutDocument(ctx, doc); err != nil {
+		return fmt.Errorf("put document: %w", err)
+	}
+
+	return nil
+}
+
+// extractTitle derives a session title from the first user message (up to 100 chars).
+func extractTitle(history []anthropic.MessageParam) string {
+	for _, msg := range history {
+		if msg.Role == anthropic.MessageParamRoleUser {
+			for _, block := range msg.Content {
+				if block.OfText != nil {
+					text := block.OfText.Text
+					if len(text) > 100 {
+						return text[:100] + "..."
+					}
+					return text
+				}
+			}
+		}
+	}
+	return "New Chat"
 }
 
 // StreamMessage sends a message in a chat session and streams events back.
-func (cm *ChatManager) StreamMessage(ctx context.Context, sessionID, message string) <-chan agent.Event {
-	cs := cm.getOrCreateSession(sessionID)
+// If sessionID is empty, a new session is created and the ID is returned via the channel
+// as an EventSessionID event (piggy-backed on the first event).
+func (cm *ChatManager) StreamMessage(ctx context.Context, sessionID, userID, message string) (string, <-chan agent.Event) {
+	if sessionID == "" {
+		sessionID = GenerateSessionID()
+	}
+
+	cs, err := cm.getOrCreateSession(ctx, sessionID, userID)
+	if err != nil {
+		events := make(chan agent.Event, 1)
+		events <- agent.Event{Type: agent.EventError, Error: err}
+		close(events)
+		return sessionID, events
+	}
 
 	cs.mu.Lock()
 
@@ -205,9 +358,98 @@ func (cm *ChatManager) StreamMessage(ctx context.Context, sessionID, message str
 			}
 		}
 
-		// Save the updated history (includes all tool calls and responses).
+		// Save the updated history to in-memory cache synchronously.
 		cs.history = session.Messages()
+
+		// Persist to DB asynchronously.
+		go func() {
+			saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := cm.saveSession(saveCtx, sessionID, cs); err != nil {
+				slog.Error("failed to persist chat session", "session", sessionID, "err", err)
+			}
+		}()
 	}()
 
-	return events
+	return sessionID, events
+}
+
+// ListSessions returns chat session metadata for a given user, ordered by updated_at desc.
+func (cm *ChatManager) ListSessions(ctx context.Context, userID string) ([]ChatSessionInfo, error) {
+	table, err := cm.registry.GetTable(ctx, "_chat_sessions")
+	if err != nil {
+		return nil, fmt.Errorf("get chat_sessions table: %w", err)
+	}
+
+	docs, err := table.SearchAttributes(ctx, []index.Filter{
+		{Field: "user_id", Op: index.OpEq, Value: userID},
+	}, 1000, 0)
+	if err != nil {
+		return nil, fmt.Errorf("search sessions: %w", err)
+	}
+
+	sessions := make([]ChatSessionInfo, 0, len(docs))
+	for _, doc := range docs {
+		title, _ := doc.Attributes["title"].(string)
+		if title == "" {
+			title = "New Chat"
+		}
+
+		updatedAt := doc.UpdatedAt
+		if ts, ok := doc.Attributes["updated_at"].(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+				updatedAt = parsed
+			}
+		}
+
+		sessions = append(sessions, ChatSessionInfo{
+			ID:        doc.ID,
+			Title:     title,
+			UpdatedAt: updatedAt,
+		})
+	}
+
+	// Sort by updated_at descending.
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
+	})
+
+	return sessions, nil
+}
+
+// DeleteSession removes a chat session from both the cache and DB.
+func (cm *ChatManager) DeleteSession(ctx context.Context, sessionID, userID string) error {
+	table, err := cm.registry.GetTable(ctx, "_chat_sessions")
+	if err != nil {
+		return fmt.Errorf("get chat_sessions table: %w", err)
+	}
+
+	// Verify ownership before deletion.
+	doc, err := table.GetDocument(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+	if doc == nil {
+		return fmt.Errorf("session not found")
+	}
+	if owner, _ := doc.Attributes["user_id"].(string); owner != userID {
+		return fmt.Errorf("session not found")
+	}
+
+	if err := table.DeleteDocument(ctx, sessionID); err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+
+	// Remove from in-memory cache.
+	cm.mu.Lock()
+	delete(cm.sessions, sessionID)
+	for i, id := range cm.accessOrder {
+		if id == sessionID {
+			cm.accessOrder = append(cm.accessOrder[:i], cm.accessOrder[i+1:]...)
+			break
+		}
+	}
+	cm.mu.Unlock()
+
+	return nil
 }

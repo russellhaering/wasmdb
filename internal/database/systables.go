@@ -24,4 +24,14 @@ var SystemTables = []SystemTableDef{
 			},
 		},
 	},
+	{
+		Name: "_chat_sessions",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "user_id", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "title", Type: document.FieldTypeString},
+				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+			},
+		},
+	},
 }

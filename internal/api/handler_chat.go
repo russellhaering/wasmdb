@@ -10,13 +10,19 @@ import (
 )
 
 type chatRequest struct {
-	SessionID string `json:"session_id"`
+	SessionID string `json:"session_id"` // empty => server generates a new one
 	Message   string `json:"message"`
 }
 
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	if s.chatManager == nil {
 		writeErrorMsg(w, 503, "unavailable", "chat agent not configured (missing ANTHROPIC_API_KEY)")
+		return
+	}
+
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		writeError(w, ErrUnauthorized)
 		return
 	}
 
@@ -28,10 +34,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	if req.Message == "" {
 		writeErrorMsg(w, 400, "bad_request", "message is required")
-		return
-	}
-	if req.SessionID == "" {
-		writeErrorMsg(w, 400, "bad_request", "session_id is required")
 		return
 	}
 
@@ -48,7 +50,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	ctx := r.Context()
-	events := s.chatManager.StreamMessage(ctx, req.SessionID, req.Message)
+	sessionID, events := s.chatManager.StreamMessage(ctx, req.SessionID, session.UserID, req.Message)
+
+	// Always send session_id as the first event so the client tracks it.
+	sidData, _ := json.Marshal(map[string]string{"session_id": sessionID})
+	fmt.Fprintf(w, "event: session\ndata: %s\n\n", string(sidData))
+	flusher.Flush()
 
 	for evt := range events {
 		var data []byte
@@ -88,7 +95,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				errMsg = evt.Error.Error()
 			}
 			data, _ = json.Marshal(map[string]string{"error": errMsg})
-			slog.Error("chat stream error", "session", req.SessionID, "err", errMsg)
+			slog.Error("chat stream error", "session", sessionID, "err", errMsg)
 		}
 
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
@@ -98,4 +105,53 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+}
+
+func (s *Server) handleListChatSessions(w http.ResponseWriter, r *http.Request) {
+	if s.chatManager == nil {
+		writeErrorMsg(w, 503, "unavailable", "chat agent not configured")
+		return
+	}
+
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		writeError(w, ErrUnauthorized)
+		return
+	}
+
+	sessions, err := s.chatManager.ListSessions(r.Context(), session.UserID)
+	if err != nil {
+		slog.Error("failed to list chat sessions", "err", err)
+		writeErrorMsg(w, 500, "internal_error", "failed to list sessions")
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"sessions": sessions})
+}
+
+func (s *Server) handleDeleteChatSession(w http.ResponseWriter, r *http.Request) {
+	if s.chatManager == nil {
+		writeErrorMsg(w, 503, "unavailable", "chat agent not configured")
+		return
+	}
+
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		writeError(w, ErrUnauthorized)
+		return
+	}
+
+	csID := r.PathValue("id")
+	if csID == "" {
+		writeErrorMsg(w, 400, "bad_request", "session id is required")
+		return
+	}
+
+	if err := s.chatManager.DeleteSession(r.Context(), csID, session.UserID); err != nil {
+		slog.Error("failed to delete chat session", "session", csID, "err", err)
+		writeErrorMsg(w, 404, "not_found", "session not found")
+		return
+	}
+
+	w.WriteHeader(204)
 }
