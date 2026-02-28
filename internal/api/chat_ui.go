@@ -205,6 +205,15 @@ const chatHTML = `<!DOCTYPE html>
   .msg.assistant .tool-call.error .tool-name {
     color: #f07070;
   }
+  .msg.assistant .tool-call.subagent .tool-name {
+    color: #e6b450;
+    font-weight: 600;
+  }
+  .msg.assistant .tool-call .tool-meta {
+    color: #8a8a8a;
+    margin-left: 4px;
+    font-size: 12px;
+  }
   .msg.assistant .tool-call::before {
     content: '  [';
     color: #606060;
@@ -953,6 +962,16 @@ let activeTextSpan = null;
 // Raw text for the active streaming text span.
 let activeTextRaw = '';
 
+function parseSubagentMeta(input) {
+  if (!input || typeof input !== 'object') return null;
+  const task = typeof input.task === 'string' ? input.task.trim() : '';
+  const model = typeof input.model === 'string' ? input.model.trim() : '';
+  return {
+    taskPreview: task ? (task.length > 90 ? task.slice(0, 90) + '…' : task) : '',
+    model: model || ''
+  };
+}
+
 function handleEvent(type, data, container, toolCalls) {
   // Remove thinking indicator on first real event.
   const th = container.querySelector('.thinking');
@@ -1001,12 +1020,30 @@ function handleEvent(type, data, container, toolCalls) {
       }
       activeTextSpan = null;
       activeTextRaw = '';
+
       const toolDiv = document.createElement('div');
-      toolDiv.className = 'tool-call pending';
+      const isSubagent = data.tool === 'delegate_subagent';
+      toolDiv.className = 'tool-call pending' + (isSubagent ? ' subagent' : '');
       toolDiv.id = 'tool-' + data.id;
-      toolDiv.innerHTML = '<span class="tool-name">' + escapeHtml(data.tool) + '</span> <span class="tool-dots"></span>';
+
+      let label = escapeHtml(data.tool);
+      if (isSubagent) {
+        label = 'sub-agent';
+      }
+      let metaHtml = '';
+      if (isSubagent) {
+        const meta = parseSubagentMeta(data.input);
+        if (meta) {
+          const bits = [];
+          if (meta.model) bits.push('model=' + meta.model);
+          if (meta.taskPreview) bits.push('task="' + meta.taskPreview + '"');
+          if (bits.length) metaHtml = ' <span class="tool-meta">' + escapeHtml(bits.join(' · ')) + '</span>';
+        }
+      }
+
+      toolDiv.innerHTML = '<span class="tool-name">' + label + '</span>' + metaHtml + ' <span class="tool-dots"></span>';
       container.appendChild(toolDiv);
-      toolCalls[data.id] = data.tool;
+      toolCalls[data.id] = isSubagent ? 'sub-agent' : data.tool;
       break;
 
     case 'tool_result': {

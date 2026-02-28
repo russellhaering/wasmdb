@@ -88,10 +88,17 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		case autobotagent.EventToolCallStart:
 			// Flush any buffered text before tool calls.
 			flushChunks(splitter.Flush())
-			data, _ := json.Marshal(map[string]string{
+			d := map[string]any{
 				"tool": evt.ToolName,
 				"id":   evt.ToolID,
-			})
+			}
+			if len(evt.ToolInput) > 0 {
+				var input any
+				if err := json.Unmarshal(evt.ToolInput, &input); err == nil {
+					d["input"] = input
+				}
+			}
+			data, _ := json.Marshal(d)
 			sendSSE("tool_start", data)
 
 		case autobotagent.EventToolResult:
