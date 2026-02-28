@@ -32,8 +32,10 @@ Implemented real SSE streaming (replaced fake batch-then-emit with `anthropic.Ne
 ## Chat Session Persistence ✅
 Chat sessions are now persisted to the `_chat_sessions` system table. Message history is JSON-serialized in the document Content field, keyed by ULID session IDs. Sessions survive restarts with an LRU in-memory cache (100 sessions) and DB fallback. The UI has a sidebar for session management (list, switch, delete, new).
 
-## CLI User Management ✅
-`wasmdb user create --email E --password P` and `wasmdb user list` commands. Both use the existing REST API (`POST /v1/users`, `GET /v1/users`).
+## CLI User Management 🟡
+`wasmdb user create --email E --password P` and `wasmdb user list` commands are implemented via the existing REST API (`POST /v1/users`, `GET /v1/users`).
+
+**Remaining:** add `wasmdb user delete <id>` (and optional `--email` targeting) to cover the existing `DELETE /v1/users/{id}` API from the CLI.
 
 ## Headless Device-Code Login ✅
 `wasmdb login --url URL --headless true` starts a device-code flow: server creates a pending code, CLI prints a login URL and polls every 2s, user completes login in browser, CLI receives token. Enables CLI auth from headless/remote environments where localhost callbacks don't work.
