@@ -10,9 +10,23 @@ The chat agent currently returns plain text for all data — query results, tabl
 
 ## Approach
 
-The agent emits A2UI component trees as fenced code blocks (` ```a2ui `) within its text responses. Both the web UI and CLI detect these blocks and render them as rich components. No changes to the SSE transport protocol — A2UI surfaces arrive as part of `text` events and are parsed client-side.
+The agent emits A2UI component trees as fenced code blocks (` ```a2ui `) within its text responses. The **server** intercepts text deltas in the SSE handler, detects ` ```a2ui ` / ` ``` ` fences, and emits them as separate `event: artifact` SSE events (inspired by the A2A protocol's `TaskArtifactUpdateEvent` pattern). Plain text between/around fences is emitted as normal `event: text` SSE events. The client renders `artifact` events directly without any fence parsing.
+
+This gives clean separation: the transport layer handles framing, and the client just renders what it receives.
 
 We implement a subset of the A2UI component model plus a custom `DataTable` component (A2UI's standard catalog doesn't include a table, but allows extensions). The web chat page is redesigned with a full TUI aesthetic.
+
+## SSE Protocol
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `session` | `{"session_id": "..."}` | First event, identifies session |
+| `text` | `{"text": "..."}` | Plain text delta (fences stripped) |
+| `artifact` | `{"json": "..."}` | Complete A2UI surface JSON |
+| `tool_start` | `{"tool": "...", "id": "..."}` | Tool call begins |
+| `tool_result` | `{"id": "...", "result": "..."}` | Tool call result |
+| `done` | `{}` | Stream complete |
+| `error` | `{"error": "..."}` | Stream error |
 
 ## A2UI Surface Format
 
@@ -59,17 +73,26 @@ All components have `id` (string), `type` (string), optional `children` (array o
 
 ## Implementation Steps
 
-### 1. A2UI Go types (`internal/a2ui/a2ui.go`)
+### 1. A2UI Go types (`internal/a2ui/a2ui.go`) ✔️
 
-Define Go types for validation/documentation. The agent generates JSON directly, but we define types for:
-- `Surface` — top-level: `Components []Component`
-- `Component` — `ID`, `Type`, `Properties map[string]any`, `Children []string`
-- `DataTableProps` — `Columns []ColumnDef`, `Rows []map[string]any`, `Caption string`
-- `ColumnDef` — `Key`, `Label`
+Go types for validation/documentation: `Surface`, `Component`, `DataTableProps`, `ColumnDef`.
+`Validate(Surface) error` checks: root exists, all child refs resolve, no cycles, known types.
 
-Include a `Validate(Surface) error` function that checks: root component exists, all child refs resolve, no cycles. Used by tests; not in the hot path.
+### 2. System prompt update (`internal/agent/chat.go`) ✔️
 
-### 2. System prompt update (`internal/agent/chat.go`)
+System prompt teaches Claude the ` ```a2ui ` fence format and supported component types.
+
+### 2b. Server-side fence detection (`internal/api/a2ui_splitter.go`) ✔️
+
+`a2uiSplitter` buffers text deltas and splits them into text and artifact chunks:
+- Detects ` ```a2ui ` opening fences and ` \n``` ` closing fences
+- Emits plain text eagerly (with partial-fence buffering to avoid splitting a fence marker)
+- Emits artifact JSON only when the complete fenced block is received
+- `Flush()` emits any remaining buffered content as text on stream end
+
+Integrated into `handler_chat.go`'s SSE loop: text deltas go through the splitter, which emits `event: text` and `event: artifact` SSE events.
+
+### 2c. System prompt update (`internal/agent/chat.go`) ✔️
 
 Update `systemPrompt` to teach Claude:
 - When to use A2UI (listing documents, showing query results, displaying schemas, showing single records)
@@ -96,21 +119,14 @@ Add 2-3 concrete examples to the prompt:
 - Login screen: terminal-style with box-drawing border
 
 **A2UI renderer (JavaScript):**
-- Parse assistant text output, splitting on ` ```a2ui ` / ` ``` ` boundaries
-- For text segments: render as-is (preserve whitespace, monospace)
-- For A2UI segments: parse JSON, walk component tree from root, render HTML
-- `DataTable` renderer: HTML `<table>` with box-drawing borders via CSS (`border-collapse`, monospace cells)
-- `Card` renderer: box-drawing bordered `<div>` with title in top border
+- `renderA2UI(jsonStr, container)` — parses JSON, walks component tree from root, renders HTML
+- `DataTable` renderer: HTML `<table>` with `.a2ui-datatable` styling
+- `Card` renderer: bordered `<div>` with title
 - `Text` renderer: `<span>` with optional label prefix and style class
 - `Row` / `Column` renderer: flex container
 - `Divider` renderer: `<hr>` styled as `─` characters
 
-**Key implementation detail:** The `handleEvent` function currently appends raw text to a span. Change it to:
-1. Buffer text until a complete message turn
-2. On `done` event (or next tool_start), split buffered text on A2UI fences
-3. Render each segment (text or A2UI surface) as a child element of the assistant message div
-
-Alternatively (simpler, works with streaming): detect ` ```a2ui ` and ` ``` ` markers incrementally in the text stream, switching between a text accumulator and an A2UI JSON accumulator.
+**Key implementation detail:** The client handles `artifact` SSE events by finalizing any pending streaming text span (converting to markdown), then calling `renderA2UI(data.json, container)` directly. No fence detection needed on the client — the server's `a2uiSplitter` handles it.
 
 ### 4. CLI `chat` command (`internal/cli/cmd_chat.go`)
 
@@ -161,16 +177,19 @@ New CLI command: `wasmdb chat`
 
 | File | Action | Description |
 |------|--------|-------------|
-| `internal/a2ui/a2ui.go` | Create | A2UI Go types + validation |
-| `internal/a2ui/a2ui_test.go` | Create | Validation tests |
-| `internal/agent/chat.go` | Modify | Update system prompt with A2UI instructions |
-| `internal/api/chat_ui.go` | Modify | Full TUI redesign + A2UI JS renderer |
-| `internal/cli/cmd_chat.go` | Create | CLI chat REPL command |
-| `internal/cli/a2ui_render.go` | Create | ANSI A2UI renderer |
-| `internal/cli/a2ui_render_test.go` | Create | Renderer tests |
-| `internal/cli/commands.go` | Modify | Register chat command |
-| `internal/cli/backend.go` | Modify | Add ChatStream to Backend interface |
-| `internal/cli/backend_http.go` | Modify | Implement ChatStream with SSE parsing |
+| `internal/a2ui/a2ui.go` | Created | A2UI Go types + validation |
+| `internal/a2ui/a2ui_test.go` | Created | Validation tests |
+| `internal/agent/chat.go` | Modified | Updated system prompt with A2UI instructions |
+| `internal/api/a2ui_splitter.go` | Created | Server-side fence detection: buffers text deltas, splits into text/artifact chunks |
+| `internal/api/a2ui_splitter_test.go` | Created | Splitter tests (plain text, streaming char-by-char, multiple artifacts, partial fences, unclosed fences) |
+| `internal/api/handler_chat.go` | Modified | Integrates `a2uiSplitter` into SSE loop, emits `artifact` events |
+| `internal/api/chat_ui.go` | Modified | TUI redesign + simplified A2UI rendering (handles `artifact` events directly, no client-side fence detection) |
+| `internal/cli/cmd_chat.go` | Planned | CLI chat REPL command |
+| `internal/cli/a2ui_render.go` | Planned | ANSI A2UI renderer |
+| `internal/cli/a2ui_render_test.go` | Planned | Renderer tests |
+| `internal/cli/commands.go` | Planned | Register chat command |
+| `internal/cli/backend.go` | Planned | Add ChatStream to Backend interface |
+| `internal/cli/backend_http.go` | Planned | Implement ChatStream with SSE parsing |
 
 ## Verification
 

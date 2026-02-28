@@ -57,24 +57,44 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: session\ndata: %s\n\n", string(sidData))
 	flusher.Flush()
 
-	for evt := range events {
-		var data []byte
-		var eventType string
+	// Helper to send an SSE event.
+	sendSSE := func(eventType string, data []byte) {
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
+		flusher.Flush()
+	}
 
+	// The splitter intercepts text deltas, detects ```a2ui fences,
+	// and emits plain text as "text" events and A2UI JSON as "artifact" events.
+	var splitter a2uiSplitter
+
+	// Flush splitter chunks as SSE events.
+	flushChunks := func(chunks []a2uiChunk) {
+		for _, c := range chunks {
+			if c.Artifact != "" {
+				d, _ := json.Marshal(map[string]string{"json": c.Artifact})
+				sendSSE("artifact", d)
+			} else if c.Text != "" {
+				d, _ := json.Marshal(map[string]string{"text": c.Text})
+				sendSSE("text", d)
+			}
+		}
+	}
+
+	for evt := range events {
 		switch evt.Type {
 		case autobotagent.EventTextDelta:
-			eventType = "text"
-			data, _ = json.Marshal(map[string]string{"text": evt.Text})
+			flushChunks(splitter.Write(evt.Text))
 
 		case autobotagent.EventToolCallStart:
-			eventType = "tool_start"
-			data, _ = json.Marshal(map[string]string{
+			// Flush any buffered text before tool calls.
+			flushChunks(splitter.Flush())
+			data, _ := json.Marshal(map[string]string{
 				"tool": evt.ToolName,
 				"id":   evt.ToolID,
 			})
+			sendSSE("tool_start", data)
 
 		case autobotagent.EventToolResult:
-			eventType = "tool_result"
 			d := map[string]any{
 				"id":     evt.ToolID,
 				"result": evt.ToolResult,
@@ -82,24 +102,23 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			if evt.ToolIsError {
 				d["error"] = true
 			}
-			data, _ = json.Marshal(d)
+			data, _ := json.Marshal(d)
+			sendSSE("tool_result", data)
 
 		case autobotagent.EventDone:
-			eventType = "done"
-			data = []byte("{}")
+			flushChunks(splitter.Flush())
+			sendSSE("done", []byte("{}"))
 
 		case autobotagent.EventError:
-			eventType = "error"
+			flushChunks(splitter.Flush())
 			errMsg := "unknown error"
 			if evt.Error != nil {
 				errMsg = evt.Error.Error()
 			}
-			data, _ = json.Marshal(map[string]string{"error": errMsg})
+			data, _ := json.Marshal(map[string]string{"error": errMsg})
 			slog.Error("chat stream error", "session", sessionID, "err", errMsg)
+			sendSSE("error", data)
 		}
-
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
-		flusher.Flush()
 
 		if evt.Type == autobotagent.EventDone || evt.Type == autobotagent.EventError {
 			break

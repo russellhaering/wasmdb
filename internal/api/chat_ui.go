@@ -298,12 +298,6 @@ const chatHTML = `<!DOCTYPE html>
     content: '';
     animation: dots 1.2s steps(4, end) infinite;
   }
-  /* A2UI streaming placeholder */
-  .a2ui-placeholder {
-    margin: 4px 0;
-    color: #606060;
-    font-size: 13px;
-  }
   /* Markdown styles */
   .md-rendered {
     white-space: normal;
@@ -365,9 +359,6 @@ const chatHTML = `<!DOCTYPE html>
   }
   .md-list.md-ol {
     list-style: decimal;
-  }
-  .md-segment {
-    display: contents;
   }
   #input-area {
     padding: 8px 16px 12px;
@@ -872,7 +863,7 @@ function renderMarkdown(text) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Code blocks (triple backtick) — but not a2ui fences (handled separately)
+    // Code blocks (triple backtick)
     if (line.trimStart().startsWith('` + "`" + "`" + "`" + `') && !inCodeBlock) {
       if (inList) { html += '</ul>'; inList = false; }
       inCodeBlock = true;
@@ -961,12 +952,6 @@ function inlineMarkdown(escaped) {
 let activeTextSpan = null;
 // Raw text for the active streaming text span.
 let activeTextRaw = '';
-// Whether we are currently inside an a2ui fence during streaming.
-let inA2UIFence = false;
-// Placeholder element shown while an a2ui block is streaming.
-let a2uiPlaceholder = null;
-// Array of {el, raw} for each text segment in the current turn, used for final re-render.
-let textSegments = [];
 
 function handleEvent(type, data, container, toolCalls) {
   // Remove thinking indicator on first real event.
@@ -976,71 +961,46 @@ function handleEvent(type, data, container, toolCalls) {
   switch (type) {
     case 'text': {
       activeTextRaw += data.text;
-
-      // Check for a2ui fences in the streaming text.
-      const fence = '` + "```a2ui" + `';
-      const closeFence = '\n` + "```" + `';
-
-      if (!inA2UIFence) {
-        const fenceIdx = activeTextRaw.indexOf(fence);
-        if (fenceIdx !== -1) {
-          // Finalize text before the fence into a segment.
-          const before = activeTextRaw.slice(0, fenceIdx);
-          if (activeTextSpan) activeTextSpan.remove();
-          if (before.trim()) {
-            const seg = appendMarkdownSegment(before, container);
-            textSegments.push({el: seg, raw: before});
-          }
-          activeTextSpan = null;
-          inA2UIFence = true;
-          // Show placeholder.
-          a2uiPlaceholder = document.createElement('div');
-          a2uiPlaceholder.className = 'a2ui-placeholder';
-          a2uiPlaceholder.innerHTML = '<span class="thinking">rendering</span>';
-          container.appendChild(a2uiPlaceholder);
-          // Keep only the part after the fence for tracking close.
-          activeTextRaw = activeTextRaw.slice(fenceIdx + fence.length);
-        } else {
-          // No fence detected — render as streaming plain text.
-          if (!activeTextSpan || activeTextSpan.parentNode !== container ||
-              activeTextSpan !== container.lastElementChild) {
-            activeTextSpan = document.createElement('span');
-            activeTextSpan.className = 'text-content';
-            container.appendChild(activeTextSpan);
-          }
-          activeTextSpan.textContent = activeTextRaw;
-        }
+      // Render as streaming plain text.
+      if (!activeTextSpan || activeTextSpan.parentNode !== container ||
+          activeTextSpan !== container.lastElementChild) {
+        activeTextSpan = document.createElement('span');
+        activeTextSpan.className = 'text-content';
+        container.appendChild(activeTextSpan);
       }
+      activeTextSpan.textContent = activeTextRaw;
+      break;
+    }
 
-      if (inA2UIFence) {
-        // Check if the closing fence has arrived.
-        const closeIdx = activeTextRaw.indexOf(closeFence);
-        if (closeIdx !== -1) {
-          inA2UIFence = false;
-          const jsonStr = activeTextRaw.slice(
-            activeTextRaw[0] === '\n' ? 1 : 0,
-            closeIdx
-          ).trim();
-          if (a2uiPlaceholder) { a2uiPlaceholder.remove(); a2uiPlaceholder = null; }
-          renderA2UI(jsonStr, container);
-          // Reset for text after the closing fence.
-          activeTextRaw = activeTextRaw.slice(closeIdx + closeFence.length);
-          if (activeTextRaw[0] === '\n') activeTextRaw = activeTextRaw.slice(1);
-          activeTextSpan = null;
-        }
+    case 'artifact': {
+      // Finalize any pending streaming text as markdown.
+      if (activeTextSpan && activeTextRaw.trim()) {
+        const md = document.createElement('div');
+        md.className = 'text-content md-rendered';
+        md.innerHTML = renderMarkdown(activeTextRaw);
+        activeTextSpan.parentNode.replaceChild(md, activeTextSpan);
+      } else if (activeTextSpan) {
+        activeTextSpan.remove();
       }
+      activeTextSpan = null;
+      activeTextRaw = '';
+      // Render the A2UI surface directly.
+      renderA2UI(data.json, container);
       break;
     }
 
     case 'tool_start':
-      // Finalize any pending text segment before the tool call.
+      // Finalize any pending streaming text as markdown before the tool call.
       if (activeTextSpan && activeTextRaw.trim()) {
-        textSegments.push({el: activeTextSpan, raw: activeTextRaw});
+        const md = document.createElement('div');
+        md.className = 'text-content md-rendered';
+        md.innerHTML = renderMarkdown(activeTextRaw);
+        activeTextSpan.parentNode.replaceChild(md, activeTextSpan);
+      } else if (activeTextSpan) {
+        activeTextSpan.remove();
       }
       activeTextSpan = null;
       activeTextRaw = '';
-      inA2UIFence = false;
-      if (a2uiPlaceholder) { a2uiPlaceholder.remove(); a2uiPlaceholder = null; }
       const toolDiv = document.createElement('div');
       toolDiv.className = 'tool-call pending';
       toolDiv.id = 'tool-' + data.id;
@@ -1068,82 +1028,23 @@ function handleEvent(type, data, container, toolCalls) {
     }
 
     case 'done':
-      // Finalize any trailing text segment.
+      // Finalize any trailing streaming text as markdown.
       if (activeTextSpan && activeTextRaw.trim()) {
-        textSegments.push({el: activeTextSpan, raw: activeTextRaw});
+        const md = document.createElement('div');
+        md.className = 'text-content md-rendered';
+        md.innerHTML = renderMarkdown(activeTextRaw);
+        activeTextSpan.parentNode.replaceChild(md, activeTextSpan);
+      } else if (activeTextSpan) {
+        activeTextSpan.remove();
       }
-      // Re-render each text segment in-place with markdown + A2UI.
-      for (const seg of textSegments) {
-        const parent = seg.el.parentNode;
-        if (!parent) continue;
-        // Create a container to hold the rendered content.
-        const frag = document.createDocumentFragment();
-        renderSegments(seg.raw, frag);
-        parent.replaceChild(wrapFragment(frag), seg.el);
-      }
-      // Also handle trailing activeTextSpan not yet in textSegments (if trim was empty above but there's content).
-      if (activeTextSpan && activeTextRaw && !textSegments.find(s => s.el === activeTextSpan)) {
-        const parent = activeTextSpan.parentNode;
-        if (parent) {
-          const frag = document.createDocumentFragment();
-          renderSegments(activeTextRaw, frag);
-          parent.replaceChild(wrapFragment(frag), activeTextSpan);
-        }
-      }
-      textSegments = [];
       activeTextSpan = null;
       activeTextRaw = '';
-      inA2UIFence = false;
-      a2uiPlaceholder = null;
       break;
   }
   scrollToBottom();
 }
 
 // Wrap a DocumentFragment's children into a single container div for replaceChild.
-function wrapFragment(frag) {
-  if (frag.childNodes.length === 1) return frag.firstChild;
-  const wrapper = document.createElement('div');
-  wrapper.className = 'md-segment';
-  wrapper.appendChild(frag);
-  return wrapper;
-}
-
-function renderSegments(text, container) {
-  const fence = '` + "```a2ui" + `';
-  const closeFence = '` + "```" + `';
-  let pos = 0;
-  while (pos < text.length) {
-    const start = text.indexOf(fence, pos);
-    if (start === -1) {
-      appendMarkdownSegment(text.slice(pos), container);
-      break;
-    }
-    // Text before the fence.
-    if (start > pos) {
-      appendMarkdownSegment(text.slice(pos, start), container);
-    }
-    // Find end of a2ui block.
-    const jsonStart = start + fence.length;
-    // Skip optional newline after fence.
-    const jsonBegin = text[jsonStart] === '\n' ? jsonStart + 1 : jsonStart;
-    const end = text.indexOf(closeFence, jsonBegin);
-    if (end === -1) {
-      // Unclosed fence, render as text.
-      appendMarkdownSegment(text.slice(start), container);
-      break;
-    }
-    const jsonStr = text.slice(jsonBegin, end).trim();
-    if (!renderA2UI(jsonStr, container)) {
-      // Failed to parse, render as text.
-      appendMarkdownSegment(text.slice(start, end + closeFence.length), container);
-    }
-    pos = end + closeFence.length;
-    // Skip optional newline after closing fence.
-    if (text[pos] === '\n') pos++;
-  }
-}
-
 function appendMarkdownSegment(text, container) {
   if (!text) return null;
   const div = document.createElement('div');
@@ -1167,9 +1068,6 @@ async function send() {
 
   activeTextRaw = '';
   activeTextSpan = null;
-  inA2UIFence = false;
-  a2uiPlaceholder = null;
-  textSegments = [];
   let toolCalls = {};
 
   const thinkingEl = document.createElement('span');
