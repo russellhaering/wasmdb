@@ -218,6 +218,11 @@ func (s *Session) Run(ctx context.Context) (*Result, error) {
 			continue
 		}
 
+		// Append the final assistant message so history is complete for
+		// subsequent turns. Tool-use turns are already appended inside
+		// processToolCalls; this covers the terminal turn.
+		s.messages = append(s.messages, assistantMessageFromResponse(msg))
+
 		result.StopReason = string(msg.StopReason)
 		break
 	}
@@ -258,6 +263,11 @@ func (s *Session) Stream(ctx context.Context) <-chan Event {
 				}
 				continue
 			}
+
+			// Append the final assistant message so history is complete for
+			// subsequent turns. Tool-use turns are already appended inside
+			// processToolCallsStreaming; this covers the terminal turn.
+			s.messages = append(s.messages, assistantMessageFromResponse(msg))
 
 			events <- Event{Type: EventDone}
 			return

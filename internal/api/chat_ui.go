@@ -168,6 +168,21 @@ const chatHTML = `<!DOCTYPE html>
     border-top: 1px solid #333;
     margin: 4px 0;
   }
+  /* Thinking indicator */
+  .thinking {
+    color: #606060;
+    font-size: 13px;
+  }
+  .thinking::after {
+    content: '';
+    animation: dots 1.2s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0%  { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+  }
   #input-area {
     padding: 8px 16px 12px;
     border-top: 1px solid #333;
@@ -507,6 +522,8 @@ function renderDivider() {
   return hr;
 }
 
+// TODO: render markdown in assistant text segments (bold, italic, lists, code blocks, etc.)
+
 // --- Streaming with A2UI detection ---
 
 let activeTextSpan = null;
@@ -515,6 +532,10 @@ let activeTextSpan = null;
 let textAccum = '';
 
 function handleEvent(type, data, container, toolCalls) {
+  // Remove thinking indicator on first real event.
+  const th = container.querySelector('.thinking');
+  if (th) th.remove();
+
   switch (type) {
     case 'text':
       textAccum += data.text;
@@ -635,6 +656,12 @@ async function send() {
   textAccum = '';
   activeTextSpan = null;
   let toolCalls = {};
+
+  const thinkingEl = document.createElement('span');
+  thinkingEl.className = 'thinking';
+  thinkingEl.textContent = 'thinking';
+  assistantDiv.appendChild(thinkingEl);
+  scrollToBottom();
 
   try {
     const resp = await fetch('/v1/chat', {
