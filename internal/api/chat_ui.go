@@ -893,8 +893,17 @@ function renderMarkdown(text) {
 
     // Blank lines
     if (line.trim() === '') {
-      if (inList) { html += '</ul>'; inList = false; }
-      html += '\n';
+      // Don't close a list if the next non-blank line is also a list item.
+      if (inList) {
+        let nextContentLine = '';
+        for (let j = i + 1; j < lines.length; j++) {
+          if (lines[j].trim() !== '') { nextContentLine = lines[j]; break; }
+        }
+        if (!nextContentLine.match(/^\s*[-*]\s+/) && !nextContentLine.match(/^\s*\d+[.)\s]\s*/)) {
+          html += '</ul>'; inList = false;
+        }
+      }
+      if (!inList) html += '\n';
       continue;
     }
 
