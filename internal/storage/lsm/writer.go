@@ -2,6 +2,7 @@ package lsm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -161,24 +162,6 @@ func (w *Writer) flushLocked(ctx context.Context) error {
 		return fmt.Errorf("writer: flush wal: %w", err)
 	}
 
-	// Reload the latest manifest to pick up any compactor changes.
-	latest, err := w.manifest.LoadLatest(ctx)
-	if err != nil {
-		return fmt.Errorf("writer: reload manifest: %w", err)
-	}
-	if latest != nil {
-		w.currentManifest = latest
-	}
-
-	// Update manifest with new L0 SSTable.
-	newManifest := &Manifest{
-		Version:        w.currentManifest.Version + 1,
-		WriterEpoch:    w.epoch,
-		CompactorEpoch: w.currentManifest.CompactorEpoch,
-		WALIDNext:      walID + 1,
-		SortedRuns:     w.currentManifest.SortedRuns,
-	}
-
 	// Prepend new L0 SSTable (newest first).
 	sstInfo := SSTInfo{
 		ID:     meta.ID,
@@ -189,15 +172,40 @@ func (w *Writer) flushLocked(ctx context.Context) error {
 		MaxSeq: meta.MaxSeq,
 		Size:   meta.Size,
 	}
-	newManifest.L0 = append([]SSTInfo{sstInfo}, w.currentManifest.L0...)
 
-	if err := w.manifest.Save(ctx, newManifest); err != nil {
-		return fmt.Errorf("writer: update manifest: %w", err)
+	// Retry loop: reload latest manifest and attempt CAS save.
+	// A concurrent compactor may bump the version between our read and write.
+	const maxRetries = 5
+	for attempt := range maxRetries {
+		latest, err := w.manifest.LoadLatest(ctx)
+		if err != nil {
+			return fmt.Errorf("writer: reload manifest: %w", err)
+		}
+		if latest != nil {
+			w.currentManifest = latest
+		}
+
+		newManifest := &Manifest{
+			Version:        w.currentManifest.Version + 1,
+			WriterEpoch:    w.epoch,
+			CompactorEpoch: w.currentManifest.CompactorEpoch,
+			WALIDNext:      walID + 1,
+			SortedRuns:     w.currentManifest.SortedRuns,
+			L0:             append([]SSTInfo{sstInfo}, w.currentManifest.L0...),
+		}
+
+		if err := w.manifest.Save(ctx, newManifest); err != nil {
+			if errors.Is(err, objstore.ErrPreconditionFailed) && attempt < maxRetries-1 {
+				continue
+			}
+			return fmt.Errorf("writer: update manifest: %w", err)
+		}
+
+		w.currentManifest = newManifest
+		slog.Info("writer flushed", "wal_id", walID, "entries", meta.EntryCount,
+			"manifest_version", newManifest.Version)
+		break
 	}
-
-	w.currentManifest = newManifest
-	slog.Info("writer flushed", "wal_id", walID, "entries", meta.EntryCount,
-		"manifest_version", newManifest.Version)
 
 	return nil
 }

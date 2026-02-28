@@ -2,6 +2,7 @@ package lsm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -107,7 +108,7 @@ func (c *Compactor) compact(ctx context.Context, m *Manifest) error {
 		return fmt.Errorf("compactor: put merged sst: %w", err)
 	}
 
-	// Build new manifest.
+	// Build new sorted run from compaction result.
 	newSortedRun := SortedRun{
 		Level: 1,
 		SSTables: []SSTInfo{{
@@ -121,22 +122,54 @@ func (c *Compactor) compact(ctx context.Context, m *Manifest) error {
 		}},
 	}
 
-	newManifest := &Manifest{
-		Version:        m.Version + 1,
-		WriterEpoch:    m.WriterEpoch,
-		CompactorEpoch: m.CompactorEpoch + 1,
-		WALIDNext:      m.WALIDNext,
-		L0:             nil, // Clear L0.
-		SortedRuns:     append([]SortedRun{newSortedRun}, existingRuns...),
+	// Track which L0 SSTables we compacted so we only remove those.
+	compactedL0 := make(map[string]struct{}, len(m.L0))
+	for _, sst := range m.L0 {
+		compactedL0[sst.ID] = struct{}{}
 	}
 
-	if err := c.manifest.Save(ctx, newManifest); err != nil {
-		return fmt.Errorf("compactor: update manifest: %w", err)
-	}
+	// Retry loop: a concurrent writer flush may bump the manifest version
+	// between our read and CAS write. On conflict, reload and re-derive.
+	const maxRetries = 5
+	for attempt := range maxRetries {
+		base := m
+		if attempt > 0 {
+			base, err = c.manifest.LoadLatest(ctx)
+			if err != nil || base == nil {
+				return fmt.Errorf("compactor: reload manifest: %w", err)
+			}
+		}
 
-	slog.Info("compaction complete",
-		"merged_entries", meta.EntryCount,
-		"manifest_version", newManifest.Version)
+		// Remove only the L0 SSTables we actually compacted; keep any
+		// new L0 entries that a concurrent writer may have added.
+		var remainingL0 []SSTInfo
+		for _, sst := range base.L0 {
+			if _, ok := compactedL0[sst.ID]; !ok {
+				remainingL0 = append(remainingL0, sst)
+			}
+		}
+
+		newManifest := &Manifest{
+			Version:        base.Version + 1,
+			WriterEpoch:    base.WriterEpoch,
+			CompactorEpoch: base.CompactorEpoch + 1,
+			WALIDNext:      base.WALIDNext,
+			L0:             remainingL0,
+			SortedRuns:     append([]SortedRun{newSortedRun}, existingRuns...),
+		}
+
+		if err := c.manifest.Save(ctx, newManifest); err != nil {
+			if errors.Is(err, objstore.ErrPreconditionFailed) && attempt < maxRetries-1 {
+				continue
+			}
+			return fmt.Errorf("compactor: update manifest: %w", err)
+		}
+
+		slog.Info("compaction complete",
+			"merged_entries", meta.EntryCount,
+			"manifest_version", newManifest.Version)
+		break
+	}
 
 	return nil
 }
