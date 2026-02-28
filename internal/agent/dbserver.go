@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	autobotagent "github.com/russellhaering/wasmdb/internal/autobot/agent"
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
@@ -90,7 +91,7 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 		Name: "delegate_subagent",
 		Description: "Delegate a focused sub-task to a one-level-deep sub-agent with optional model override. " +
 			"Use this for research/summarization/planning when isolating context helps. " +
-			"Input: {task, model?, max_turns?}.",
+			"Input: {task, model?, max_turns?}. Model may be an alias like sonnet/opus/haiku.",
 	}, h.delegateSubagent)
 
 	return srv
@@ -490,9 +491,15 @@ func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolReque
 	// One-level deep only: nesting is blocked by excluding delegate_subagent from sub-agent tools.
 	_ = req
 
-	model := strings.TrimSpace(input.Model)
+	defaultModel := strings.TrimSpace(h.subAgentModel)
+	if defaultModel == "" {
+		defaultModel = string(anthropic.ModelClaudeSonnet4_5_20250929)
+	}
+
+	requestedModel := normalizeModelAlias(input.Model)
+	model := requestedModel
 	if model == "" {
-		model = strings.TrimSpace(h.subAgentModel)
+		model = defaultModel
 	}
 
 	maxTurns := input.MaxTurns
@@ -512,31 +519,54 @@ func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolReque
 	system := "You are a focused sub-agent. Complete the assigned task and return a concise result. " +
 		"You may use tools as needed. Do not call delegate_subagent (nesting is not allowed)."
 
-	a := autobotagent.NewAgent(autobotagent.Config{
-		APIKey:          h.anthropicAPIKey,
-		Model:           model,
-		SystemPrompt:    system,
-		MaxTokens:       8192,
-		MaxTurns:        maxTurns,
-		DisallowedTools: map[string]bool{"delegate_subagent": true},
-	}, sg)
+	runWithModel := func(m string) (*autobotagent.Result, error) {
+		a := autobotagent.NewAgent(autobotagent.Config{
+			APIKey:          h.anthropicAPIKey,
+			Model:           m,
+			SystemPrompt:    system,
+			MaxTokens:       8192,
+			MaxTurns:        maxTurns,
+			DisallowedTools: map[string]bool{"delegate_subagent": true},
+		}, sg)
 
-	s, err := a.NewSession(ctx, input.Task)
-	if err != nil {
-		return textError("failed to create sub-agent session: " + err.Error()), nil, nil
+		s, err := a.NewSession(ctx, input.Task)
+		if err != nil {
+			return nil, fmt.Errorf("create session: %w", err)
+		}
+		return s.Run(ctx)
 	}
 
-	res, err := s.Run(ctx)
+	res, err := runWithModel(model)
+	fallbackUsed := ""
+	fallbackReason := ""
+	if err != nil && requestedModel != "" && model != defaultModel {
+		res, err = runWithModel(defaultModel)
+		if err == nil {
+			fallbackUsed = defaultModel
+			fallbackReason = "requested model failed; used default sub-agent model"
+			model = defaultModel
+		}
+	}
 	if err != nil {
 		return textError("sub-agent execution failed: " + err.Error()), nil, nil
 	}
 
+	resultText := strings.TrimSpace(res.Text)
 	payload := map[string]any{
+		"ok":                  true,
 		"model":               model,
+		"summary":             resultText,
+		"result":              resultText,
 		"stop_reason":         res.StopReason,
 		"total_input_tokens":  res.TotalInputTokens,
 		"total_output_tokens": res.TotalOutputTokens,
-		"result":              strings.TrimSpace(res.Text),
+	}
+	if fallbackUsed != "" {
+		payload["fallback_model"] = fallbackUsed
+		payload["fallback_reason"] = fallbackReason
+	}
+	if requestedModel != "" {
+		payload["requested_model"] = requestedModel
 	}
 	return jsonResult(payload), nil, nil
 }
@@ -545,4 +575,24 @@ func mcpxSingleServerGroup(server *mcp.Server) *mcpx.ServerGroup {
 	sg := mcpx.NewServerGroup()
 	sg.AddServer("table", server)
 	return sg
+}
+
+func normalizeModelAlias(model string) string {
+	m := strings.TrimSpace(strings.ToLower(model))
+	switch m {
+	case "":
+		return ""
+	case "sonnet", "claude-sonnet", "sonnet-4.5", "claude-sonnet-4-5", "claude-sonnet-4.5":
+		return string(anthropic.ModelClaudeSonnet4_5_20250929)
+	case "sonnet-4.6", "claude-sonnet-4-6", "claude-sonnet-4.6":
+		return string(anthropic.ModelClaudeSonnet4_6)
+	case "opus", "claude-opus", "opus-4.5", "claude-opus-4-5", "claude-opus-4.5":
+		return string(anthropic.ModelClaudeOpus4_5)
+	case "opus-4.6", "claude-opus-4-6", "claude-opus-4.6":
+		return string(anthropic.ModelClaudeOpus4_6)
+	case "haiku", "claude-haiku", "haiku-4.5", "claude-haiku-4-5", "claude-haiku-4.5":
+		return string(anthropic.ModelClaudeHaiku4_5)
+	default:
+		return strings.TrimSpace(model)
+	}
 }
