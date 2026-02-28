@@ -368,27 +368,37 @@ func (s *Session) sendMessage(ctx context.Context) (*anthropic.Message, error) {
 	return s.agent.client.Messages.New(ctx, params)
 }
 
-// streamMessage sends messages with streaming and emits text delta events.
+// streamMessage sends messages with real SSE streaming, emitting text deltas
+// as they arrive from the API.
 func (s *Session) streamMessage(ctx context.Context, events chan<- Event) (*anthropic.Message, error) {
-	msg, err := s.sendMessage(ctx)
-	if err != nil {
-		return nil, err
-	}
+	params := s.buildParams()
+	stream := s.agent.client.Messages.NewStreaming(ctx, params)
+	defer stream.Close()
 
-	// Emit text deltas from the response
-	for _, block := range msg.Content {
-		if block.Type == "text" {
-			tb := block.AsText()
-			if tb.Text != "" {
-				events <- Event{
-					Type: EventTextDelta,
-					Text: tb.Text,
+	var msg anthropic.Message
+	for stream.Next() {
+		evt := stream.Current()
+		msg.Accumulate(evt)
+
+		switch variant := evt.AsAny().(type) {
+		case anthropic.ContentBlockDeltaEvent:
+			switch delta := variant.Delta.AsAny().(type) {
+			case anthropic.TextDelta:
+				if delta.Text != "" {
+					events <- Event{
+						Type: EventTextDelta,
+						Text: delta.Text,
+					}
 				}
 			}
 		}
 	}
 
-	return msg, nil
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+
+	return &msg, nil
 }
 
 // buildParams constructs the MessageNewParams for the API call.

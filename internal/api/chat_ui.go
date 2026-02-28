@@ -278,7 +278,7 @@ const chatHTML = `<!DOCTYPE html>
     border-top: 1px solid #333;
     margin: 4px 0;
   }
-  /* Thinking indicator */
+  /* Thinking / activity indicator */
   .thinking {
     color: #606060;
     font-size: 13px;
@@ -292,6 +292,11 @@ const chatHTML = `<!DOCTYPE html>
     25% { content: '.'; }
     50% { content: '..'; }
     75% { content: '...'; }
+  }
+  /* Tool call pending animation */
+  .tool-call.pending .tool-dots::after {
+    content: '';
+    animation: dots 1.2s steps(4, end) infinite;
   }
   #input-area {
     padding: 8px 16px 12px;
@@ -812,9 +817,9 @@ function handleEvent(type, data, container, toolCalls) {
       activeTextSpan = null;
       textAccum = '';
       const toolDiv = document.createElement('div');
-      toolDiv.className = 'tool-call';
+      toolDiv.className = 'tool-call pending';
       toolDiv.id = 'tool-' + data.id;
-      toolDiv.innerHTML = '<span class="tool-name">' + escapeHtml(data.tool) + '</span> ...';
+      toolDiv.innerHTML = '<span class="tool-name">' + escapeHtml(data.tool) + '</span> <span class="tool-dots"></span>';
       container.appendChild(toolDiv);
       toolCalls[data.id] = data.tool;
       break;
@@ -823,12 +828,8 @@ function handleEvent(type, data, container, toolCalls) {
       const el = document.getElementById('tool-' + data.id);
       if (el) {
         const name = toolCalls[data.id] || 'tool';
-        if (data.error) {
-          el.className = 'tool-call error';
-          el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> error';
-        } else {
-          el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> done';
-        }
+        el.className = 'tool-call' + (data.error ? ' error' : '');
+        el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> ' + (data.error ? 'error' : 'done');
       }
       break;
     }
