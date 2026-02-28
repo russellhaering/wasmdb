@@ -24,6 +24,13 @@ type TextSearchResult struct {
 	Total   int                  `json:"total"`
 }
 
+// UserInfo holds user metadata returned by the API.
+type UserInfo struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"created_at"`
+}
+
 // HealthStatus holds the result of a health or readiness check.
 type HealthStatus struct {
 	Status string `json:"status"`
@@ -48,6 +55,9 @@ type Backend interface {
 	SearchText(ctx context.Context, db string, query string, limit, offset int) (*TextSearchResult, error)
 	SearchVector(ctx context.Context, db string, query string, k int) ([]*document.Document, error)
 	SearchAttributes(ctx context.Context, db string, filters []index.Filter, limit, offset int) ([]*document.Document, error)
+
+	CreateUser(ctx context.Context, email, password string) (*UserInfo, error)
+	ListUsers(ctx context.Context) ([]UserInfo, error)
 
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)

@@ -87,6 +87,27 @@ func (c *Client) do(ctx context.Context, method, path string, body any, result a
 	return nil
 }
 
+func (c *Client) CreateUser(ctx context.Context, email, password string) (*cli.UserInfo, error) {
+	body := struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}{Email: email, Password: password}
+
+	var resp cli.UserInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/users", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListUsers(ctx context.Context) ([]cli.UserInfo, error) {
+	var resp []cli.UserInfo
+	if err := c.do(ctx, http.MethodGet, "/v1/users", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 func (c *Client) CreateTable(ctx context.Context, name string, schema *document.Schema) (*cli.TableInfo, error) {
 	body := struct {
 		Name   string           `json:"name"`
