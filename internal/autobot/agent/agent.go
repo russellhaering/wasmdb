@@ -160,8 +160,12 @@ func (a *Agent) NewSessionWithHistory(ctx context.Context, history []anthropic.M
 		return nil, fmt.Errorf("listing tools: %w", err)
 	}
 
-	messages := make([]anthropic.MessageParam, len(history))
-	copy(messages, history)
+	// Trim history if it's getting too long to leave room for the new message
+	// and the response. Target keeping ~60% of context budget for history.
+	trimmed := trimHistory(history, 150000)
+
+	messages := make([]anthropic.MessageParam, len(trimmed))
+	copy(messages, trimmed)
 	messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)))
 
 	return &Session{
@@ -169,6 +173,70 @@ func (a *Agent) NewSessionWithHistory(ctx context.Context, history []anthropic.M
 		messages: messages,
 		tools:    tools,
 	}, nil
+}
+
+// estimateTokens gives a rough token count for a message list.
+// Uses ~4 chars per token as a heuristic.
+func estimateTokens(messages []anthropic.MessageParam) int {
+	total := 0
+	for _, msg := range messages {
+		for _, block := range msg.Content {
+			if block.OfText != nil {
+				total += len(block.OfText.Text) / 4
+			} else if block.OfToolUse != nil {
+				inputLen := 0
+				if b, ok := block.OfToolUse.Input.(json.RawMessage); ok {
+					inputLen = len(b)
+				} else if b, err := json.Marshal(block.OfToolUse.Input); err == nil {
+					inputLen = len(b)
+				}
+				total += len(block.OfToolUse.Name)/4 + inputLen/4
+			} else if block.OfToolResult != nil {
+				for _, c := range block.OfToolResult.Content {
+					if c.OfText != nil {
+						total += len(c.OfText.Text) / 4
+					}
+				}
+			}
+		}
+	}
+	return total
+}
+
+// trimHistory removes the oldest messages (from the front) to fit within
+// a target token budget. It preserves message pairing (user/assistant) and
+// ensures the first message is always a user message (API requirement).
+func trimHistory(messages []anthropic.MessageParam, maxTokens int) []anthropic.MessageParam {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	tokens := estimateTokens(messages)
+	if tokens <= maxTokens {
+		return messages
+	}
+
+	// Drop messages from the front until we're under budget.
+	// Keep at least the last 2 messages for minimal context.
+	result := messages
+	for len(result) > 2 && estimateTokens(result) > maxTokens {
+		result = result[1:]
+	}
+
+	// Ensure first message is a user message (API requirement).
+	for len(result) > 1 && result[0].Role != anthropic.MessageParamRoleUser {
+		result = result[1:]
+	}
+
+	if len(result) < len(messages) {
+		slog.Info("trimmed chat history",
+			"original_messages", len(messages),
+			"trimmed_messages", len(result),
+			"estimated_tokens", estimateTokens(result),
+		)
+	}
+
+	return result
 }
 
 // Messages returns the current message history for the session.
@@ -188,6 +256,7 @@ func (s *Session) Run(ctx context.Context) (*Result, error) {
 
 	for {
 		if s.agent.config.MaxTurns > 0 && turns >= s.agent.config.MaxTurns {
+			result.Text += "\n\n[Reached the maximum number of tool-use steps for this response.]"
 			result.StopReason = "max_turns"
 			break
 		}
@@ -223,6 +292,10 @@ func (s *Session) Run(ctx context.Context) (*Result, error) {
 		// processToolCalls; this covers the terminal turn.
 		s.messages = append(s.messages, assistantMessageFromResponse(msg))
 
+		if msg.StopReason == "max_tokens" {
+			result.Text += "\n\n[Response truncated due to length.]"
+		}
+
 		result.StopReason = string(msg.StopReason)
 		break
 	}
@@ -242,6 +315,11 @@ func (s *Session) Stream(ctx context.Context) <-chan Event {
 
 		for {
 			if s.agent.config.MaxTurns > 0 && turns >= s.agent.config.MaxTurns {
+				// Notify the user that the agent hit the turn limit.
+				events <- Event{
+					Type: EventTextDelta,
+					Text: "\n\n[Reached the maximum number of tool-use steps for this response. Please send another message to continue.]",
+				}
 				events <- Event{Type: EventDone}
 				return
 			}
@@ -268,6 +346,13 @@ func (s *Session) Stream(ctx context.Context) <-chan Event {
 			// subsequent turns. Tool-use turns are already appended inside
 			// processToolCallsStreaming; this covers the terminal turn.
 			s.messages = append(s.messages, assistantMessageFromResponse(msg))
+
+			if msg.StopReason == "max_tokens" {
+				events <- Event{
+					Type: EventTextDelta,
+					Text: "\n\n[Response truncated due to length. Send another message to continue.]",
+				}
+			}
 
 			events <- Event{Type: EventDone}
 			return
