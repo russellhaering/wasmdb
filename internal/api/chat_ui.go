@@ -188,6 +188,14 @@ const chatHTML = `<!DOCTYPE html>
     color: #4ec94e;
     font-weight: bold;
   }
+  .msg.user.queued {
+    opacity: 0.75;
+  }
+  .msg.user.queued::after {
+    content: '  [queued]';
+    color: #606060;
+    font-size: 12px;
+  }
   .msg.assistant {
     color: #b0b0b0;
     padding-left: 2px;
@@ -570,6 +578,8 @@ const chat = document.getElementById('chat');
 const msgInput = document.getElementById('msg');
 const sendBtn = document.getElementById('send');
 let sessionId = null; // Will be set by server or when loading a session
+let inflight = false;
+let queuedMessages = [];
 
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
@@ -632,7 +642,13 @@ function renderSessionList(sessions) {
 }
 
 function startNewSession() {
+  if (inflight) {
+    addMessage('system', 'agent is still running — queued messages will continue in this session first');
+    return;
+  }
   sessionId = null;
+  queuedMessages = [];
+  updateSendButtonState();
   chat.innerHTML = '';
   if (isMobile()) closeSidebar();
   // Deselect all sidebar items.
@@ -641,7 +657,13 @@ function startNewSession() {
 }
 
 async function switchToSession(id) {
+  if (inflight) {
+    addMessage('system', 'agent is still running — wait for turn completion before switching sessions');
+    return;
+  }
   sessionId = id;
+  queuedMessages = [];
+  updateSendButtonState();
   chat.innerHTML = '';
   if (isMobile()) closeSidebar();
   // Update active state in sidebar.
@@ -1104,13 +1126,18 @@ function appendMarkdownSegment(text, container) {
   return div;
 }
 
-async function send() {
-  const text = msgInput.value.trim();
-  if (!text) return;
-  msgInput.value = '';
-  msgInput.style.height = 'auto';
-  sendBtn.disabled = true;
-  addMessage('user', text);
+function updateSendButtonState() {
+  if (inflight) {
+    sendBtn.textContent = queuedMessages.length > 0 ? ('queue (' + queuedMessages.length + ')') : 'queue';
+  } else {
+    sendBtn.textContent = 'send';
+  }
+}
+
+async function runTurn(entry) {
+  inflight = true;
+  if (entry.userDiv) entry.userDiv.classList.remove('queued');
+  updateSendButtonState();
 
   const assistantDiv = document.createElement('div');
   assistantDiv.className = 'msg assistant';
@@ -1127,7 +1154,7 @@ async function send() {
   scrollToBottom();
 
   try {
-    const body = {message: text};
+    const body = {message: entry.text};
     if (sessionId) body.session_id = sessionId;
     const resp = await fetch('/v1/chat', {
       method: 'POST',
@@ -1141,9 +1168,9 @@ async function send() {
       } else {
         assistantDiv.textContent = 'error: ' + (err.message || resp.statusText);
       }
-      sendBtn.disabled = false;
       return;
     }
+
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -1161,7 +1188,6 @@ async function send() {
           const data = JSON.parse(line.slice(6));
           if (eventType === 'session' && data.session_id) {
             sessionId = data.session_id;
-            // Refresh sidebar to show the new session once done.
           } else {
             handleEvent(eventType, data, assistantDiv, toolCalls);
           }
@@ -1173,13 +1199,40 @@ async function send() {
     if (!assistantDiv.textContent) {
       assistantDiv.textContent = 'connection error: ' + err.message;
     }
+  } finally {
+    inflight = false;
+    updateSendButtonState();
+    // Refresh session list after message completes (persistence is async).
+    setTimeout(loadSessions, 500);
+    if (queuedMessages.length > 0) {
+      const next = queuedMessages.shift();
+      updateSendButtonState();
+      runTurn(next);
+    } else {
+      msgInput.focus();
+    }
   }
-  sendBtn.disabled = false;
-  msgInput.focus();
-  // Refresh session list after message completes (persistence is async).
-  setTimeout(loadSessions, 500);
 }
 
+async function send() {
+  const text = msgInput.value.trim();
+  if (!text) return;
+
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+
+  const userDiv = addMessage('user', text);
+  if (inflight) {
+    userDiv.classList.add('queued');
+    queuedMessages.push({text, userDiv});
+    updateSendButtonState();
+    return;
+  }
+
+  runTurn({text, userDiv});
+}
+
+updateSendButtonState();
 msgInput.focus();
 </script>
 </body>
