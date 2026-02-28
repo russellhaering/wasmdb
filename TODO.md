@@ -18,8 +18,8 @@ Introduce first-class concepts of "agents", "skills", and "memories", all stored
 ## Agent MCP Server Configuration
 Allow MCP servers to be configured per-agent via a system table. This lets each agent have its own set of external tool integrations (e.g. Slack, GitHub, databases) without hardcoding them in the server config.
 
-## Chat Agent Activity Indicator
-The current "thinking..." spinner only covers the initial wait before the first event. Add a more comprehensive activity indicator that shows the agent is still working during long tool-call sequences — e.g. an animated spinner next to the latest tool call, or a persistent "working" state in the input area while the agent turn is in progress.
+## Chat Agent Activity Indicator ✅
+Implemented real SSE streaming (replaced fake batch-then-emit with `anthropic.NewStreaming()` + `Accumulate()`). Text deltas now stream token-by-token to the browser. Tool call indicators have animated dots (`...` CSS animation) while pending, switching to "done"/"error" on completion. Combined with token-level streaming, the UI no longer feels stuck during agent turns.
 
 ## Chat Session Persistence ✅
 Chat sessions are now persisted to the `_chat_sessions` system table. Message history is JSON-serialized in the document Content field, keyed by ULID session IDs. Sessions survive restarts with an LRU in-memory cache (100 sessions) and DB fallback. The UI has a sidebar for session management (list, switch, delete, new).
