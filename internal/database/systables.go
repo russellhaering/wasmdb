@@ -45,4 +45,16 @@ var SystemTables = []SystemTableDef{
 			},
 		},
 	},
+	{
+		Name: "_skills",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "description", Type: document.FieldTypeString},
+				{Name: "function_name", Type: document.FieldTypeString, Indexed: true},
+				{Name: "created_by", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+			},
+		},
+	},
 }

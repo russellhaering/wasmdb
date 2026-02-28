@@ -17,8 +17,11 @@ JavaScript functions execute in a QuickJS-in-Wasm sandbox (via `github.com/fasts
 
 **Done:** Engine core (`internal/functions/`), `db` host API bindings, handler(params) + bare expression modes, console.log capture, 30s timeout, 64MB memory limit, 10 concurrent execution limit. REST API (CRUD: `POST/GET/PUT/DELETE /v1/functions`, exec: `POST /v1/functions/{name}/exec`, ephemeral: `POST /v1/exec`). Agent tools (`execute_code`, `manage_function`) with system prompt. CLI commands (`fn create/list/get/update/delete/exec`, `exec --file/--code`). `_functions` system table.
 
-## Agents, Skills & Memories
+## Agents, Skills & Memories 🟡
 Introduce first-class concepts of "agents", "skills", and "memories", all stored in the database (likely as system tables). Agents are configurable AI actors; skills define reusable capabilities an agent can invoke; memories are persistent context that agents accumulate over time and can recall in future interactions.
+
+**Done (skills):** `_skills` system table, skills store (`internal/skills`) with CRUD + execute (via linked stored function), REST API (`POST/GET/PUT/DELETE /v1/skills`, `POST /v1/skills/{name}/exec`), CLI commands (`skill create/list/get/update/delete/exec`), and agent `manage_skill` tool.
+**Remaining:** Agent and memory first-class models + APIs.
 
 ## Agent MCP Server Configuration
 Allow MCP servers to be configured per-agent via a system table. This lets each agent have its own set of external tool integrations (e.g. Slack, GitHub, databases) without hardcoding them in the server config.

@@ -17,6 +17,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/wasmdb/internal/skills"
 )
 
 const systemPrompt = `You are a helpful assistant for WasmDB, a document-oriented database.
@@ -146,7 +147,13 @@ Use execute_code for:
 Define a handler(params) function for parameterized code, or write bare expressions for one-off work.
 console.log() output is captured and returned in the result.
 
-Use manage_function to save frequently-needed code as named stored functions that can be invoked later.`
+Use manage_function to save frequently-needed code as named stored functions that can be invoked later.
+
+## Skills
+
+Use manage_skill to create reusable named capabilities that map to stored functions,
+and to execute skills by name with params.
+Prefer skills for recurring workflows and stable automations users may want to rerun.`
 
 const maxCachedSessions = 100
 
@@ -198,7 +205,8 @@ func NewChatManager(ctx context.Context, cfg ChatConfig) (*ChatManager, error) {
 	}
 
 	servers := mcpx.NewServerGroup()
-	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore, subAgentModel, cfg.AnthropicAPIKey))
+	skillStore := skills.NewStore(cfg.Registry, cfg.FnStore, cfg.FnEngine)
+	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore, skillStore, subAgentModel, cfg.AnthropicAPIKey))
 
 	if err := servers.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("connecting MCP servers: %w", err)

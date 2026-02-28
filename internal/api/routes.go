@@ -51,6 +51,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/functions/{name}/exec", s.handleExecStored)
 	mux.HandleFunc("POST /v1/exec", s.handleExecEphemeral)
 
+	// Skills.
+	mux.HandleFunc("POST /v1/skills", s.handleCreateSkill)
+	mux.HandleFunc("GET /v1/skills", s.handleListSkills)
+	mux.HandleFunc("GET /v1/skills/{name}", s.handleGetSkill)
+	mux.HandleFunc("PUT /v1/skills/{name}", s.handleUpdateSkill)
+	mux.HandleFunc("DELETE /v1/skills/{name}", s.handleDeleteSkill)
+	mux.HandleFunc("POST /v1/skills/{name}/exec", s.handleExecSkill)
+
 	// GraphQL.
 	mux.Handle("POST /v1/graphql", s.graphql)
 

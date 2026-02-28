@@ -461,3 +461,61 @@ func parseSSE(r io.Reader, ch chan<- cli.ChatEvent) {
 	}
 }
 
+func (c *Client) CreateSkill(ctx context.Context, name, description, functionName string) (*cli.SkillInfo, error) {
+	body := struct {
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		FunctionName string `json:"function_name"`
+	}{Name: name, Description: description, FunctionName: functionName}
+
+	var resp cli.SkillInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/skills", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListSkills(ctx context.Context) ([]cli.SkillSummary, error) {
+	var resp []cli.SkillSummary
+	if err := c.do(ctx, http.MethodGet, "/v1/skills", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) GetSkill(ctx context.Context, name string) (*cli.SkillDetail, error) {
+	var resp cli.SkillDetail
+	if err := c.do(ctx, http.MethodGet, "/v1/skills/"+name, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateSkill(ctx context.Context, name, description, functionName string) (*cli.SkillInfo, error) {
+	body := struct {
+		Description  string `json:"description"`
+		FunctionName string `json:"function_name"`
+	}{Description: description, FunctionName: functionName}
+
+	var resp cli.SkillInfo
+	if err := c.do(ctx, http.MethodPut, "/v1/skills/"+name, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteSkill(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/skills/"+name, nil, nil)
+}
+
+func (c *Client) ExecSkill(ctx context.Context, name string, params map[string]any) (*cli.ExecResult, error) {
+	body := struct {
+		Params map[string]any `json:"params,omitempty"`
+	}{Params: params}
+
+	var resp cli.ExecResult
+	if err := c.do(ctx, http.MethodPost, "/v1/skills/"+name+"/exec", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

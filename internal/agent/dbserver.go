@@ -16,16 +16,17 @@ import (
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/wasmdb/internal/skills"
 )
 
 // NewTableServer creates an MCP server exposing wasmdb table operations as tools.
-func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store, subAgentModel, anthropicAPIKey string) *mcp.Server {
+func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store, skillStore *skills.Store, subAgentModel, anthropicAPIKey string) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "wasmdb-table",
 		Version: "v0.1.0",
 	}, nil)
 
-	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
+	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_tables",
@@ -88,6 +89,11 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 	}, h.manageFunction)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "manage_skill",
+		Description: "Create, update, get, list, delete, or execute skills. Skills map a stable capability name to a stored function.",
+	}, h.manageSkill)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name: "delegate_subagent",
 		Description: "Delegate a focused sub-task to a one-level-deep sub-agent with optional model override. " +
 			"Use this for research/summarization/planning when isolating context helps. " +
@@ -101,6 +107,7 @@ type dbHandler struct {
 	registry        *database.Registry
 	fnEngine        *functions.Engine
 	fnStore         *functions.Store
+	skillStore      *skills.Store
 	subAgentModel   string
 	anthropicAPIKey string
 }
@@ -372,6 +379,14 @@ type manageFunctionInput struct {
 	Description string `json:"description,omitempty" jsonschema:"Function description"`
 }
 
+type manageSkillInput struct {
+	Action       string         `json:"action" jsonschema:"Action: create, update, get, list, delete, or exec"`
+	Name         string         `json:"name,omitempty" jsonschema:"Skill name (required for create, update, get, delete, exec)"`
+	Description  string         `json:"description,omitempty" jsonschema:"Skill description"`
+	FunctionName string         `json:"function_name,omitempty" jsonschema:"Linked stored function name (required for create, update)"`
+	Params       map[string]any `json:"params,omitempty" jsonschema:"Params passed when action=exec"`
+}
+
 type delegateSubagentInput struct {
 	Task     string `json:"task" jsonschema:"Task for the sub-agent to execute"`
 	Model    string `json:"model,omitempty" jsonschema:"Optional model override for sub-agent (defaults to WASMDB_SUBAGENT_MODEL or parent model)"`
@@ -458,6 +473,87 @@ func (h *dbHandler) manageFunction(ctx context.Context, _ *mcp.CallToolRequest, 
 	}
 }
 
+func (h *dbHandler) manageSkill(ctx context.Context, _ *mcp.CallToolRequest, input manageSkillInput) (*mcp.CallToolResult, any, error) {
+	if h.skillStore == nil {
+		return textError("Skill storage is not available."), nil, nil
+	}
+
+	switch input.Action {
+	case "create":
+		if input.Name == "" || input.FunctionName == "" {
+			return textError("name and function_name are required for create"), nil, nil
+		}
+		sk, err := h.skillStore.Create(ctx, input.Name, input.Description, input.FunctionName, "")
+		if err != nil {
+			return textError("Failed to create skill: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":      sk.ID,
+			"name":    sk.Name,
+			"message": "Skill created successfully.",
+		}), nil, nil
+
+	case "update":
+		if input.Name == "" || input.FunctionName == "" {
+			return textError("name and function_name are required for update"), nil, nil
+		}
+		sk, err := h.skillStore.Update(ctx, input.Name, input.Description, input.FunctionName)
+		if err != nil {
+			return textError("Failed to update skill: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":      sk.ID,
+			"name":    sk.Name,
+			"message": "Skill updated successfully.",
+		}), nil, nil
+
+	case "get":
+		if input.Name == "" {
+			return textError("name is required for get"), nil, nil
+		}
+		sk, err := h.skillStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to get skill: " + err.Error()), nil, nil
+		}
+		if sk == nil {
+			return textError("Skill not found: " + input.Name), nil, nil
+		}
+		return jsonResult(sk), nil, nil
+
+	case "list":
+		skills, err := h.skillStore.List(ctx)
+		if err != nil {
+			return textError("Failed to list skills: " + err.Error()), nil, nil
+		}
+		if len(skills) == 0 {
+			return textResult("No stored skills found."), nil, nil
+		}
+		return jsonResult(skills), nil, nil
+
+	case "delete":
+		if input.Name == "" {
+			return textError("name is required for delete"), nil, nil
+		}
+		if err := h.skillStore.Delete(ctx, input.Name); err != nil {
+			return textError("Failed to delete skill: " + err.Error()), nil, nil
+		}
+		return textResult(fmt.Sprintf("Skill %q deleted successfully.", input.Name)), nil, nil
+
+	case "exec":
+		if input.Name == "" {
+			return textError("name is required for exec"), nil, nil
+		}
+		res, err := h.skillStore.Execute(ctx, input.Name, input.Params)
+		if err != nil {
+			return textError("Failed to execute skill: " + err.Error()), nil, nil
+		}
+		return jsonResult(res), nil, nil
+
+	default:
+		return textError("Unknown action: " + input.Action + ". Use create, update, get, list, delete, or exec."), nil, nil
+	}
+}
+
 // --- Helpers ---
 
 func textResult(text string) *mcp.CallToolResult {
@@ -510,7 +606,7 @@ func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolReque
 		maxTurns = 20
 	}
 
-	sg := mcpxSingleServerGroup(NewTableServer(h.registry, h.fnEngine, h.fnStore, h.subAgentModel, h.anthropicAPIKey))
+	sg := mcpxSingleServerGroup(NewTableServer(h.registry, h.fnEngine, h.fnStore, h.skillStore, h.subAgentModel, h.anthropicAPIKey))
 	defer sg.Close()
 	if err := sg.Connect(ctx); err != nil {
 		return textError("failed to start sub-agent tools: " + err.Error()), nil, nil

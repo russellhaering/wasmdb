@@ -71,6 +71,35 @@ type HealthStatus struct {
 	Status string `json:"status"`
 }
 
+// SkillInfo holds basic skill metadata returned after create/update.
+type SkillInfo struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	FunctionName string `json:"function_name"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	UpdatedAt    string `json:"updated_at,omitempty"`
+}
+
+// SkillSummary holds skill metadata for list display.
+type SkillSummary struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	FunctionName string `json:"function_name"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+// SkillDetail holds full skill details.
+type SkillDetail struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	FunctionName string `json:"function_name"`
+	CreatedBy    string `json:"created_by,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
 // Backend defines the operations available to CLI commands.
 type Backend interface {
 	CreateTable(ctx context.Context, name string, schema *document.Schema) (*TableInfo, error)
@@ -101,6 +130,13 @@ type Backend interface {
 	DeleteFunction(ctx context.Context, name string) error
 	ExecFunction(ctx context.Context, name string, params map[string]any) (*ExecResult, error)
 	ExecCode(ctx context.Context, code string, params map[string]any) (*ExecResult, error)
+
+	CreateSkill(ctx context.Context, name, description, functionName string) (*SkillInfo, error)
+	ListSkills(ctx context.Context) ([]SkillSummary, error)
+	GetSkill(ctx context.Context, name string) (*SkillDetail, error)
+	UpdateSkill(ctx context.Context, name, description, functionName string) (*SkillInfo, error)
+	DeleteSkill(ctx context.Context, name string) error
+	ExecSkill(ctx context.Context, name string, params map[string]any) (*ExecResult, error)
 
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)
