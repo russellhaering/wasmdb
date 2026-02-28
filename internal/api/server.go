@@ -152,7 +152,8 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 
 		// Auth — skip for health checks, login, and CLI login page.
 		switch r.URL.Path {
-		case "/healthz", "/readyz", "/v1/auth/login", "/auth/cli-login", "/chat":
+		case "/healthz", "/readyz", "/v1/auth/login", "/auth/cli-login", "/chat",
+			"/v1/auth/device-login", "/v1/auth/device-login/poll", "/v1/auth/device-login/complete":
 			// No auth required.
 		default:
 			session, err := s.authenticateRequest(r)

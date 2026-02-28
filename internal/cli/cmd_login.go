@@ -33,12 +33,17 @@ func runLogin(ctx *cmdContext) error {
 	email := ctx.flag("email")
 	password := ctx.flag("password")
 
-	// If email/password provided, do direct login (headless mode).
+	// If email/password provided, do direct login.
 	if email != "" && password != "" {
 		return loginDirect(ctx, serverURL, email, password)
 	}
 
-	// Browser-based login flow.
+	// If --headless, use device code polling flow.
+	if ctx.flag("headless") == "true" {
+		return loginDevice(ctx, serverURL)
+	}
+
+	// Browser-based login flow with localhost callback.
 	return loginBrowser(ctx, serverURL)
 }
 
@@ -54,6 +59,85 @@ func loginDirect(ctx *cmdContext, serverURL, email, password string) error {
 
 	fmt.Fprintf(ctx.stdout, "Logged in as %s\n", userEmail)
 	return nil
+}
+
+func loginDevice(ctx *cmdContext, serverURL string) error {
+	// Start device login flow.
+	req, err := http.NewRequestWithContext(ctx, "POST", serverURL+"/v1/auth/device-login", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("start device login: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("device login start failed: %s", resp.Status)
+	}
+
+	var startResp struct {
+		DeviceCode string `json:"device_code"`
+		LoginURL   string `json:"login_url"`
+		ExpiresIn  int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&startResp); err != nil {
+		return fmt.Errorf("decode device login response: %w", err)
+	}
+
+	fmt.Fprintf(ctx.stderr, "Visit this URL to log in:\n\n  %s\n\n", startResp.LoginURL)
+	fmt.Fprintf(ctx.stderr, "Waiting for login (expires in %ds)...\n", startResp.ExpiresIn)
+
+	// Poll for completion.
+	pollURL := serverURL + "/v1/auth/device-login/poll?code=" + startResp.DeviceCode
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	deadline := time.After(time.Duration(startResp.ExpiresIn) * time.Second)
+
+	for {
+		select {
+		case <-ticker.C:
+			pReq, err := http.NewRequestWithContext(ctx, "GET", pollURL, nil)
+			if err != nil {
+				return err
+			}
+			pResp, err := http.DefaultClient.Do(pReq)
+			if err != nil {
+				continue // transient error, keep polling
+			}
+
+			if pResp.StatusCode == 202 {
+				pResp.Body.Close()
+				continue // still pending
+			}
+			if pResp.StatusCode == 410 {
+				pResp.Body.Close()
+				return fmt.Errorf("device code expired")
+			}
+			if pResp.StatusCode == 200 {
+				var pollResp struct {
+					Token string `json:"token"`
+					Email string `json:"email"`
+				}
+				json.NewDecoder(pResp.Body).Decode(&pollResp)
+				pResp.Body.Close()
+
+				if err := SaveCredentials(serverURL, pollResp.Token); err != nil {
+					return fmt.Errorf("save credentials: %w", err)
+				}
+				fmt.Fprintf(ctx.stdout, "Logged in as %s\n", pollResp.Email)
+				return nil
+			}
+			pResp.Body.Close()
+
+		case <-deadline:
+			return fmt.Errorf("login timed out")
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func loginBrowser(ctx *cmdContext, serverURL string) error {

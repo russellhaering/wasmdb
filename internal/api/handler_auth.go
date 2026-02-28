@@ -107,12 +107,13 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCLILoginPage(w http.ResponseWriter, r *http.Request) {
 	port := r.URL.Query().Get("port")
 	state := r.URL.Query().Get("state")
+	deviceCode := r.URL.Query().Get("device_code")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(cliLoginHTML(port, state)))
+	w.Write([]byte(cliLoginHTML(port, state, deviceCode)))
 }
 
-func cliLoginHTML(port, state string) string {
+func cliLoginHTML(port, state, deviceCode string) string {
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -188,6 +189,7 @@ func cliLoginHTML(port, state string) string {
 <script>
 const PORT = ` + jsonStr(port) + `;
 const STATE = ` + jsonStr(state) + `;
+const DEVICE_CODE = ` + jsonStr(deviceCode) + `;
 
 document.getElementById('password').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') doLogin();
@@ -225,7 +227,14 @@ async function doLogin() {
     document.getElementById('form').style.display = 'none';
     document.getElementById('success').style.display = 'block';
 
-    if (PORT && STATE) {
+    if (DEVICE_CODE) {
+      // Headless device flow: POST token back to server.
+      await fetch('/v1/auth/device-login/complete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_code: DEVICE_CODE, token: data.token, email: data.user.email})
+      });
+    } else if (PORT && STATE) {
       window.location.href = 'http://localhost:' + PORT + '/callback?token=' + encodeURIComponent(data.token) + '&state=' + encodeURIComponent(STATE);
     }
   } catch (e) {
