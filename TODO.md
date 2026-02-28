@@ -6,8 +6,11 @@ Allow creation of a UI for data stored in the database. UI configuration is stor
 ## Rego-Based Permissions
 Add a permission system built on [OPA/Rego](https://www.openpolicyagent.org/). Policies would govern who can read/write which tables, documents, or fields. Evaluate policies per-request using the bearer token identity as input.
 
-## Agent Data Display (Tables & Cards)
-Introduce a way for agents to render structured data in conversations — both tabular views and some kind of "card" format for individual records. This would let AI chat responses include rich, formatted data displays rather than raw JSON.
+## Agent Data Display (Tables & Cards) 🟡
+Agents can render structured data in conversations using A2UI components (DataTable, Card, Text, Row, Column, Divider). Claude emits ` ```a2ui ` fenced JSON blocks; the server-side `a2uiSplitter` strips fences and emits `event: artifact` SSE events; the web client renders them directly. TUI-themed web UI with monospace styling.
+
+**Done:** A2UI Go types + validation, system prompt with examples, server-side fence detection (`a2ui_splitter.go`), `artifact` SSE event type, web JS renderer, CSS for all component types.
+**Remaining:** CLI ANSI renderer for A2UI components (box-drawing tables/cards in terminal).
 
 ## Stored Functions
 Introduce a concept of "functions" — the ability to store code in the database, then execute that code on demand. Stored functions must themselves be able to operate on the database (read/write documents, query indexes, etc.). This is the foundation for server-side logic, triggers, and computed fields.
@@ -23,3 +26,9 @@ Implemented real SSE streaming (replaced fake batch-then-emit with `anthropic.Ne
 
 ## Chat Session Persistence ✅
 Chat sessions are now persisted to the `_chat_sessions` system table. Message history is JSON-serialized in the document Content field, keyed by ULID session IDs. Sessions survive restarts with an LRU in-memory cache (100 sessions) and DB fallback. The UI has a sidebar for session management (list, switch, delete, new).
+
+## CLI User Management ✅
+`wasmdb user create --email E --password P` and `wasmdb user list` commands. Both use the existing REST API (`POST /v1/users`, `GET /v1/users`).
+
+## Headless Device-Code Login ✅
+`wasmdb login --url URL --headless true` starts a device-code flow: server creates a pending code, CLI prints a login URL and polls every 2s, user completes login in browser, CLI receives token. Enables CLI auth from headless/remote environments where localhost callbacks don't work.
