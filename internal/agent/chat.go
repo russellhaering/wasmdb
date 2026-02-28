@@ -15,6 +15,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
 )
 
@@ -115,7 +116,35 @@ Search results with summary:
 - Simple confirmations ("Document created.", "Table deleted.")
 - Error messages
 - Conversational responses or explanations
-- When there is no structured data to display`
+- When there is no structured data to display
+
+## JavaScript Execution
+
+You can execute JavaScript code using the execute_code tool. The code runs in a
+sandboxed environment with access to a ` + "`" + `db` + "`" + ` global object for database operations.
+
+Available db methods:
+- db.tables() — list all tables
+- db.table(name).list(limit?) — list documents
+- db.table(name).get(id) — get a document by ID
+- db.table(name).put({id?, content?, attributes?}) — create or update a document
+- db.table(name).delete(id) — delete a document
+- db.table(name).search.text(query, limit?) — full-text search
+- db.table(name).search.attr(filters, limit?) — attribute search (filters: [{field, op, value}])
+- db.createTable(name) — create a new table
+- db.deleteTable(name) — delete a table
+
+Use execute_code for:
+- Bulk operations (update many documents at once)
+- Data transformations and enrichment
+- Analytics and aggregations
+- Finding duplicates or anomalies
+- Any logic that's easier to express in code than as individual API calls
+
+Define a handler(params) function for parameterized code, or write bare expressions for one-off work.
+console.log() output is captured and returned in the result.
+
+Use manage_function to save frequently-needed code as named stored functions that can be invoked later.`
 
 const maxCachedSessions = 100
 
@@ -131,6 +160,8 @@ type ChatConfig struct {
 	AnthropicAPIKey string
 	Model           string
 	Registry        *database.Registry
+	FnEngine        *functions.Engine
+	FnStore         *functions.Store
 }
 
 // ChatManager manages chat sessions for the web interface.
@@ -159,7 +190,7 @@ func NewChatManager(ctx context.Context, cfg ChatConfig) (*ChatManager, error) {
 	}
 
 	servers := mcpx.NewServerGroup()
-	servers.AddServer("table", NewTableServer(cfg.Registry))
+	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore))
 
 	if err := servers.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("connecting MCP servers: %w", err)

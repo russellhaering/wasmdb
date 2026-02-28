@@ -12,8 +12,10 @@ Agents can render structured data in conversations using A2UI components (DataTa
 **Done:** A2UI Go types + validation, system prompt with examples, server-side fence detection (`a2ui_splitter.go`), `artifact` SSE event type, web JS renderer, CSS for all component types.
 **Remaining:** CLI ANSI renderer for A2UI components (box-drawing tables/cards in terminal).
 
-## Stored Functions
-Introduce a concept of "functions" — the ability to store code in the database, then execute that code on demand. Stored functions must themselves be able to operate on the database (read/write documents, query indexes, etc.). This is the foundation for server-side logic, triggers, and computed fields.
+## Stored Functions ✅
+JavaScript functions execute in a QuickJS-in-Wasm sandbox (via `github.com/fastschema/qjs` + wazero). Pure Go, no cgo, CGO_ENABLED=0 compatible. Functions have access to a `db` host API for table CRUD, search, and document operations. System tables are blocked from function access.
+
+**Done:** Engine core (`internal/functions/`), `db` host API bindings, handler(params) + bare expression modes, console.log capture, 30s timeout, 64MB memory limit, 10 concurrent execution limit. REST API (CRUD: `POST/GET/PUT/DELETE /v1/functions`, exec: `POST /v1/functions/{name}/exec`, ephemeral: `POST /v1/exec`). Agent tools (`execute_code`, `manage_function`) with system prompt. CLI commands (`fn create/list/get/update/delete/exec`, `exec --file/--code`). `_functions` system table.
 
 ## Agents, Skills & Memories
 Introduce first-class concepts of "agents", "skills", and "memories", all stored in the database (likely as system tables). Agents are configurable AI actors; skills define reusable capabilities an agent can invoke; memories are persistent context that agents accumulate over time and can recall in future interactions.

@@ -25,6 +25,17 @@ var SystemTables = []SystemTableDef{
 		},
 	},
 	{
+		Name: "_functions",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "description", Type: document.FieldTypeString},
+				{Name: "created_by", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+			},
+		},
+	},
+	{
 		Name: "_chat_sessions",
 		Schema: &document.Schema{
 			Fields: []document.FieldDefinition{

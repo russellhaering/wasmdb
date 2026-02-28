@@ -74,7 +74,15 @@ wasmdb doc get mydb DOC_ID              # get document
 wasmdb search text mydb "query"         # full-text search
 wasmdb user create --email E --password P  # create user
 wasmdb user list                        # list users
-wasmdb chat                             # interactive chat
+wasmdb fn create myfn --file fn.js       # create stored function
+wasmdb fn list                           # list stored functions
+wasmdb fn get myfn                       # get function details + code
+wasmdb fn update myfn --file fn.js       # update function code
+wasmdb fn delete myfn                    # delete stored function
+wasmdb fn exec myfn --params '{"x":1}'   # execute stored function
+wasmdb exec --file script.js             # execute ephemeral JS
+wasmdb exec --code 'db.tables()'         # inline ephemeral JS
+wasmdb chat                              # interactive chat
 ```
 
 Add `--json` to any command for JSON output.

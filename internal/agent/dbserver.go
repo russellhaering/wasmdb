@@ -11,17 +11,18 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
 )
 
 // NewTableServer creates an MCP server exposing wasmdb table operations as tools.
-func NewTableServer(registry *database.Registry) *mcp.Server {
+func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "wasmdb-table",
 		Version: "v0.1.0",
 	}, nil)
 
-	h := &dbHandler{registry: registry}
+	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_tables",
@@ -73,11 +74,23 @@ func NewTableServer(registry *database.Registry) *mcp.Server {
 		Description: "Search documents by filtering on attribute values. Supports eq, neq, gt, gte, lt, lte, contains, prefix operators.",
 	}, h.searchAttributes)
 
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "execute_code",
+		Description: "Execute JavaScript code in a sandboxed environment with access to the db API for database operations. Use for bulk operations, data transformations, analytics, aggregations, finding duplicates, or any logic easier to express in code.",
+	}, h.executeCode)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "manage_function",
+		Description: "Create, update, get, list, or delete stored JavaScript functions. Stored functions persist and can be invoked by name.",
+	}, h.manageFunction)
+
 	return srv
 }
 
 type dbHandler struct {
 	registry *database.Registry
+	fnEngine *functions.Engine
+	fnStore  *functions.Store
 }
 
 // --- Tool input types ---
@@ -333,6 +346,98 @@ func (h *dbHandler) searchAttributes(ctx context.Context, _ *mcp.CallToolRequest
 	}
 
 	return jsonResult(results), nil, nil
+}
+
+type executeCodeInput struct {
+	Code   string         `json:"code" jsonschema:"JavaScript source code to execute"`
+	Params map[string]any `json:"params,omitempty" jsonschema:"Parameters available as 'params' in the code"`
+}
+
+type manageFunctionInput struct {
+	Action      string `json:"action" jsonschema:"Action: create, update, get, list, or delete"`
+	Name        string `json:"name,omitempty" jsonschema:"Function name (required for create, update, get, delete)"`
+	Code        string `json:"code,omitempty" jsonschema:"JavaScript source code (required for create, update)"`
+	Description string `json:"description,omitempty" jsonschema:"Function description"`
+}
+
+func (h *dbHandler) executeCode(ctx context.Context, _ *mcp.CallToolRequest, input executeCodeInput) (*mcp.CallToolResult, any, error) {
+	if h.fnEngine == nil {
+		return textError("JavaScript execution is not available."), nil, nil
+	}
+
+	result := h.fnEngine.Execute(ctx, input.Code, input.Params)
+	return jsonResult(result), nil, nil
+}
+
+func (h *dbHandler) manageFunction(ctx context.Context, _ *mcp.CallToolRequest, input manageFunctionInput) (*mcp.CallToolResult, any, error) {
+	if h.fnStore == nil {
+		return textError("Function storage is not available."), nil, nil
+	}
+
+	switch input.Action {
+	case "create":
+		if input.Name == "" || input.Code == "" {
+			return textError("name and code are required for create"), nil, nil
+		}
+		fn, err := h.fnStore.Create(ctx, input.Name, input.Description, input.Code, "")
+		if err != nil {
+			return textError("Failed to create function: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":   fn.ID,
+			"name": fn.Name,
+			"message": "Function created successfully.",
+		}), nil, nil
+
+	case "update":
+		if input.Name == "" || input.Code == "" {
+			return textError("name and code are required for update"), nil, nil
+		}
+		fn, err := h.fnStore.Update(ctx, input.Name, input.Code, input.Description)
+		if err != nil {
+			return textError("Failed to update function: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":   fn.ID,
+			"name": fn.Name,
+			"message": "Function updated successfully.",
+		}), nil, nil
+
+	case "get":
+		if input.Name == "" {
+			return textError("name is required for get"), nil, nil
+		}
+		fn, err := h.fnStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to get function: " + err.Error()), nil, nil
+		}
+		if fn == nil {
+			return textError("Function not found: " + input.Name), nil, nil
+		}
+		return jsonResult(fn), nil, nil
+
+	case "list":
+		fns, err := h.fnStore.List(ctx)
+		if err != nil {
+			return textError("Failed to list functions: " + err.Error()), nil, nil
+		}
+		if len(fns) == 0 {
+			return textResult("No stored functions found."), nil, nil
+		}
+		return jsonResult(fns), nil, nil
+
+	case "delete":
+		if input.Name == "" {
+			return textError("name is required for delete"), nil, nil
+		}
+		if err := h.fnStore.Delete(ctx, input.Name); err != nil {
+			return textError("Failed to delete function: " + err.Error()), nil, nil
+		}
+		return textResult(fmt.Sprintf("Function %q deleted successfully.", input.Name)), nil, nil
+
+	default:
+		return textError("Unknown action: " + input.Action + ". Use create, update, get, list, or delete."), nil, nil
+	}
 }
 
 // --- Helpers ---

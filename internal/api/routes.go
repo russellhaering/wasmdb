@@ -42,6 +42,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/auth/device-login/poll", s.handleDeviceLoginPoll)
 	mux.HandleFunc("POST /v1/auth/device-login/complete", s.handleDeviceLoginComplete)
 
+	// Functions.
+	mux.HandleFunc("POST /v1/functions", s.handleCreateFunction)
+	mux.HandleFunc("GET /v1/functions", s.handleListFunctions)
+	mux.HandleFunc("GET /v1/functions/{name}", s.handleGetFunction)
+	mux.HandleFunc("PUT /v1/functions/{name}", s.handleUpdateFunction)
+	mux.HandleFunc("DELETE /v1/functions/{name}", s.handleDeleteFunction)
+	mux.HandleFunc("POST /v1/functions/{name}/exec", s.handleExecStored)
+	mux.HandleFunc("POST /v1/exec", s.handleExecEphemeral)
+
 	// GraphQL.
 	mux.Handle("POST /v1/graphql", s.graphql)
 

@@ -12,6 +12,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/api/graphqlapi"
 	"github.com/russellhaering/wasmdb/internal/auth"
 	"github.com/russellhaering/wasmdb/internal/database"
+	"github.com/russellhaering/wasmdb/internal/functions"
 )
 
 type sessionContextKeyType struct{}
@@ -31,6 +32,8 @@ type Server struct {
 	graphql     *graphqlapi.Handler
 	chatManager *agent.ChatManager
 	sessions    *auth.SessionManager
+	fnEngine    *functions.Engine
+	fnStore     *functions.Store
 }
 
 // ServerConfig configures the API server.
@@ -45,6 +48,8 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	s := &Server{
 		registry: cfg.Registry,
 		sessions: auth.NewSessionManager(cfg.Registry),
+		fnEngine: functions.NewEngine(cfg.Registry, 0, 0),
+		fnStore:  functions.NewStore(cfg.Registry),
 	}
 
 	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)
@@ -58,6 +63,8 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		cm, err := agent.NewChatManager(ctx, agent.ChatConfig{
 			AnthropicAPIKey: cfg.AnthropicAPIKey,
 			Registry:        cfg.Registry,
+			FnEngine:        s.fnEngine,
+			FnStore:         s.fnStore,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("init chat agent: %w", err)

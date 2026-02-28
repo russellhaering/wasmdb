@@ -31,6 +31,41 @@ type UserInfo struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// FunctionInfo holds basic function metadata returned after create/update.
+type FunctionInfo struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// FunctionSummary holds function metadata for list display.
+type FunctionSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// FunctionDetail holds full function details.
+type FunctionDetail struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Code        string `json:"code"`
+	CreatedBy   string `json:"created_by,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// ExecResult holds the result of code execution.
+type ExecResult struct {
+	Result     any      `json:"result"`
+	Logs       []string `json:"logs"`
+	DurationMS int64    `json:"duration_ms"`
+	Error      string   `json:"error,omitempty"`
+}
+
 // HealthStatus holds the result of a health or readiness check.
 type HealthStatus struct {
 	Status string `json:"status"`
@@ -58,6 +93,14 @@ type Backend interface {
 
 	CreateUser(ctx context.Context, email, password string) (*UserInfo, error)
 	ListUsers(ctx context.Context) ([]UserInfo, error)
+
+	CreateFunction(ctx context.Context, name, description, code string) (*FunctionInfo, error)
+	ListFunctions(ctx context.Context) ([]FunctionSummary, error)
+	GetFunction(ctx context.Context, name string) (*FunctionDetail, error)
+	UpdateFunction(ctx context.Context, name, code, description string) (*FunctionInfo, error)
+	DeleteFunction(ctx context.Context, name string) error
+	ExecFunction(ctx context.Context, name string, params map[string]any) (*ExecResult, error)
+	ExecCode(ctx context.Context, code string, params map[string]any) (*ExecResult, error)
 
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)

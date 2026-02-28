@@ -269,6 +269,78 @@ func (c *Client) Ready(ctx context.Context) (*cli.HealthStatus, error) {
 	return &resp, nil
 }
 
+func (c *Client) CreateFunction(ctx context.Context, name, description, code string) (*cli.FunctionInfo, error) {
+	body := struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Code        string `json:"code"`
+	}{Name: name, Description: description, Code: code}
+
+	var resp cli.FunctionInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/functions", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListFunctions(ctx context.Context) ([]cli.FunctionSummary, error) {
+	var resp []cli.FunctionSummary
+	if err := c.do(ctx, http.MethodGet, "/v1/functions", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) GetFunction(ctx context.Context, name string) (*cli.FunctionDetail, error) {
+	var resp cli.FunctionDetail
+	if err := c.do(ctx, http.MethodGet, "/v1/functions/"+name, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateFunction(ctx context.Context, name, code, description string) (*cli.FunctionInfo, error) {
+	body := struct {
+		Code        string `json:"code"`
+		Description string `json:"description"`
+	}{Code: code, Description: description}
+
+	var resp cli.FunctionInfo
+	if err := c.do(ctx, http.MethodPut, "/v1/functions/"+name, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteFunction(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/functions/"+name, nil, nil)
+}
+
+func (c *Client) ExecFunction(ctx context.Context, name string, params map[string]any) (*cli.ExecResult, error) {
+	body := struct {
+		Params map[string]any `json:"params,omitempty"`
+	}{Params: params}
+
+	var resp cli.ExecResult
+	if err := c.do(ctx, http.MethodPost, "/v1/functions/"+name+"/exec", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ExecCode(ctx context.Context, code string, params map[string]any) (*cli.ExecResult, error) {
+	body := struct {
+		Code   string         `json:"code"`
+		Params map[string]any `json:"params,omitempty"`
+	}{Code: code, Params: params}
+
+	var resp cli.ExecResult
+	if err := c.do(ctx, http.MethodPost, "/v1/exec", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) ChatStream(ctx context.Context, sessionID, message string) (<-chan cli.ChatEvent, error) {
 	body := struct {
 		SessionID string `json:"session_id"`
