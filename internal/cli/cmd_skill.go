@@ -9,7 +9,7 @@ func init() {
 	register(command{
 		noun:        "skill",
 		verb:        "create",
-		usage:       "wasmdb skill create <name> --function <function-name> [--description <desc>] [--json]",
+		usage:       "wasmdb skill create <name> --function <function-name> [--description <desc>] [--manual-only] [--json]",
 		description: "Create a skill linked to a stored function",
 		run:         skillCreate,
 	})
@@ -30,7 +30,7 @@ func init() {
 	register(command{
 		noun:        "skill",
 		verb:        "update",
-		usage:       "wasmdb skill update <name> --function <function-name> [--description <desc>] [--json]",
+		usage:       "wasmdb skill update <name> --function <function-name> [--description <desc>] [--manual-only] [--json]",
 		description: "Update a skill",
 		run:         skillUpdate,
 	})
@@ -60,8 +60,9 @@ func skillCreate(ctx *cmdContext) error {
 		return fmt.Errorf("--function is required")
 	}
 	description := ctx.flag("description")
+	manualOnly := ctx.hasFlag("manual-only")
 
-	sk, err := ctx.backend.CreateSkill(ctx, name, description, functionName)
+	sk, err := ctx.backend.CreateSkill(ctx, name, description, functionName, manualOnly)
 	if err != nil {
 		return err
 	}
@@ -69,7 +70,7 @@ func skillCreate(ctx *cmdContext) error {
 	if ctx.json {
 		return formatJSON(ctx.stdout, sk)
 	}
-	fmt.Fprintf(ctx.stdout, "Created skill %q -> function %q\n", name, functionName)
+	fmt.Fprintf(ctx.stdout, "Created skill %q -> function %q (manual_only=%t)\n", name, functionName, sk.DisableModelInvocation)
 	return nil
 }
 
@@ -90,9 +91,9 @@ func skillList(ctx *cmdContext) error {
 
 	for _, sk := range skills {
 		if sk.Description != "" {
-			fmt.Fprintf(ctx.stdout, "%s\t%s\t%s\t%s\n", sk.Name, sk.FunctionName, sk.Description, sk.UpdatedAt)
+			fmt.Fprintf(ctx.stdout, "%s\t%s\tmanual_only=%t\t%s\t%s\n", sk.Name, sk.FunctionName, sk.DisableModelInvocation, sk.Description, sk.UpdatedAt)
 		} else {
-			fmt.Fprintf(ctx.stdout, "%s\t%s\t%s\n", sk.Name, sk.FunctionName, sk.UpdatedAt)
+			fmt.Fprintf(ctx.stdout, "%s\t%s\tmanual_only=%t\t%s\n", sk.Name, sk.FunctionName, sk.DisableModelInvocation, sk.UpdatedAt)
 		}
 	}
 	return nil
@@ -113,8 +114,8 @@ func skillGet(ctx *cmdContext) error {
 		return formatJSON(ctx.stdout, sk)
 	}
 
-	fmt.Fprintf(ctx.stdout, "Name: %s\nID: %s\nFunction: %s\nDescription: %s\nCreated: %s\nUpdated: %s\n",
-		sk.Name, sk.ID, sk.FunctionName, sk.Description, sk.CreatedAt, sk.UpdatedAt)
+	fmt.Fprintf(ctx.stdout, "Name: %s\nID: %s\nFunction: %s\nManual only: %t\nDescription: %s\nCreated: %s\nUpdated: %s\n",
+		sk.Name, sk.ID, sk.FunctionName, sk.DisableModelInvocation, sk.Description, sk.CreatedAt, sk.UpdatedAt)
 	return nil
 }
 
@@ -128,8 +129,9 @@ func skillUpdate(ctx *cmdContext) error {
 		return fmt.Errorf("--function is required")
 	}
 	description := ctx.flag("description")
+	manualOnly := ctx.hasFlag("manual-only")
 
-	sk, err := ctx.backend.UpdateSkill(ctx, name, description, functionName)
+	sk, err := ctx.backend.UpdateSkill(ctx, name, description, functionName, manualOnly)
 	if err != nil {
 		return err
 	}
@@ -137,7 +139,7 @@ func skillUpdate(ctx *cmdContext) error {
 	if ctx.json {
 		return formatJSON(ctx.stdout, sk)
 	}
-	fmt.Fprintf(ctx.stdout, "Updated skill %q\n", name)
+	fmt.Fprintf(ctx.stdout, "Updated skill %q (manual_only=%t)\n", name, sk.DisableModelInvocation)
 	return nil
 }
 

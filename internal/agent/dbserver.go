@@ -89,6 +89,16 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 	}, h.manageFunction)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_skills_catalog",
+		Description: "List a compact skills catalog for discovery (name, description, function_name, manual_only). Use this first for progressive disclosure.",
+	}, h.listSkillsCatalog)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "get_skill_detail",
+		Description: "Get full detail for a single skill by name. Use only after selecting a candidate from list_skills_catalog.",
+	}, h.getSkillDetail)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "manage_skill",
 		Description: "Create, update, get, list, delete, or execute skills. Skills map a stable capability name to a stored function.",
 	}, h.manageSkill)
@@ -380,11 +390,18 @@ type manageFunctionInput struct {
 }
 
 type manageSkillInput struct {
-	Action       string         `json:"action" jsonschema:"Action: create, update, get, list, delete, or exec"`
-	Name         string         `json:"name,omitempty" jsonschema:"Skill name (required for create, update, get, delete, exec)"`
-	Description  string         `json:"description,omitempty" jsonschema:"Skill description"`
-	FunctionName string         `json:"function_name,omitempty" jsonschema:"Linked stored function name (required for create, update)"`
-	Params       map[string]any `json:"params,omitempty" jsonschema:"Params passed when action=exec"`
+	Action                 string         `json:"action" jsonschema:"Action: create, update, get, list, delete, or exec"`
+	Name                   string         `json:"name,omitempty" jsonschema:"Skill name (required for create, update, get, delete, exec)"`
+	Description            string         `json:"description,omitempty" jsonschema:"Skill description"`
+	FunctionName           string         `json:"function_name,omitempty" jsonschema:"Linked stored function name (required for create, update)"`
+	DisableModelInvocation bool           `json:"disable_model_invocation,omitempty" jsonschema:"If true, model should not auto-invoke this skill"`
+	Params                 map[string]any `json:"params,omitempty" jsonschema:"Params passed when action=exec"`
+}
+
+type listSkillsCatalogInput struct{}
+
+type getSkillDetailInput struct {
+	Name string `json:"name" jsonschema:"Skill name"`
 }
 
 type delegateSubagentInput struct {
@@ -483,7 +500,7 @@ func (h *dbHandler) manageSkill(ctx context.Context, _ *mcp.CallToolRequest, inp
 		if input.Name == "" || input.FunctionName == "" {
 			return textError("name and function_name are required for create"), nil, nil
 		}
-		sk, err := h.skillStore.Create(ctx, input.Name, input.Description, input.FunctionName, "")
+		sk, err := h.skillStore.Create(ctx, input.Name, input.Description, input.FunctionName, "", input.DisableModelInvocation)
 		if err != nil {
 			return textError("Failed to create skill: " + err.Error()), nil, nil
 		}
@@ -497,7 +514,7 @@ func (h *dbHandler) manageSkill(ctx context.Context, _ *mcp.CallToolRequest, inp
 		if input.Name == "" || input.FunctionName == "" {
 			return textError("name and function_name are required for update"), nil, nil
 		}
-		sk, err := h.skillStore.Update(ctx, input.Name, input.Description, input.FunctionName)
+		sk, err := h.skillStore.Update(ctx, input.Name, input.Description, input.FunctionName, input.DisableModelInvocation)
 		if err != nil {
 			return textError("Failed to update skill: " + err.Error()), nil, nil
 		}
@@ -543,11 +560,24 @@ func (h *dbHandler) manageSkill(ctx context.Context, _ *mcp.CallToolRequest, inp
 		if input.Name == "" {
 			return textError("name is required for exec"), nil, nil
 		}
+		sk, err := h.skillStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to load skill: " + err.Error()), nil, nil
+		}
+		if sk == nil {
+			return textError("Skill not found: " + input.Name), nil, nil
+		}
 		res, err := h.skillStore.Execute(ctx, input.Name, input.Params)
 		if err != nil {
 			return textError("Failed to execute skill: " + err.Error()), nil, nil
 		}
-		return jsonResult(res), nil, nil
+		return jsonResult(map[string]any{
+			"skill": map[string]any{
+				"name":                     sk.Name,
+				"disable_model_invocation": sk.DisableModelInvocation,
+			},
+			"result": res,
+		}), nil, nil
 
 	default:
 		return textError("Unknown action: " + input.Action + ". Use create, update, get, list, delete, or exec."), nil, nil
@@ -691,4 +721,53 @@ func normalizeModelAlias(model string) string {
 	default:
 		return strings.TrimSpace(model)
 	}
+}
+
+func (h *dbHandler) listSkillsCatalog(ctx context.Context, _ *mcp.CallToolRequest, _ listSkillsCatalogInput) (*mcp.CallToolResult, any, error) {
+	if h.skillStore == nil {
+		return textError("Skill storage is not available."), nil, nil
+	}
+
+	skills, err := h.skillStore.List(ctx)
+	if err != nil {
+		return textError("Failed to list skills: " + err.Error()), nil, nil
+	}
+	if len(skills) == 0 {
+		return textResult("No stored skills found."), nil, nil
+	}
+
+	type catalogSkill struct {
+		Name                   string `json:"name"`
+		Description            string `json:"description"`
+		FunctionName           string `json:"function_name"`
+		DisableModelInvocation bool   `json:"disable_model_invocation,omitempty"`
+	}
+	catalog := make([]catalogSkill, 0, len(skills))
+	for _, sk := range skills {
+		catalog = append(catalog, catalogSkill{
+			Name:                   sk.Name,
+			Description:            sk.Description,
+			FunctionName:           sk.FunctionName,
+			DisableModelInvocation: sk.DisableModelInvocation,
+		})
+	}
+	return jsonResult(catalog), nil, nil
+}
+
+func (h *dbHandler) getSkillDetail(ctx context.Context, _ *mcp.CallToolRequest, input getSkillDetailInput) (*mcp.CallToolResult, any, error) {
+	if h.skillStore == nil {
+		return textError("Skill storage is not available."), nil, nil
+	}
+	if input.Name == "" {
+		return textError("name is required"), nil, nil
+	}
+
+	sk, err := h.skillStore.Get(ctx, input.Name)
+	if err != nil {
+		return textError("Failed to get skill: " + err.Error()), nil, nil
+	}
+	if sk == nil {
+		return textError("Skill not found: " + input.Name), nil, nil
+	}
+	return jsonResult(sk), nil, nil
 }

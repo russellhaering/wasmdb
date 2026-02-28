@@ -14,9 +14,10 @@ func (s *Server) handleCreateSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name         string `json:"name"`
-		Description  string `json:"description"`
-		FunctionName string `json:"function_name"`
+		Name                   string `json:"name"`
+		Description            string `json:"description"`
+		FunctionName           string `json:"function_name"`
+		DisableModelInvocation bool   `json:"disable_model_invocation"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrBadRequest)
@@ -33,17 +34,18 @@ func (s *Server) handleCreateSkill(w http.ResponseWriter, r *http.Request) {
 		userID = session.UserID
 	}
 
-	sk, err := s.skillStore.Create(r.Context(), req.Name, req.Description, req.FunctionName, userID)
+	sk, err := s.skillStore.Create(r.Context(), req.Name, req.Description, req.FunctionName, userID, req.DisableModelInvocation)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":            sk.ID,
-		"name":          sk.Name,
-		"function_name": sk.FunctionName,
-		"created_at":    sk.CreatedAt.Format(time.RFC3339),
+		"id":                       sk.ID,
+		"name":                     sk.Name,
+		"function_name":            sk.FunctionName,
+		"disable_model_invocation": sk.DisableModelInvocation,
+		"created_at":               sk.CreatedAt.Format(time.RFC3339),
 	})
 }
 
@@ -61,20 +63,22 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type skillSummary struct {
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		Description  string `json:"description,omitempty"`
-		FunctionName string `json:"function_name"`
-		UpdatedAt    string `json:"updated_at"`
+		ID                     string `json:"id"`
+		Name                   string `json:"name"`
+		Description            string `json:"description,omitempty"`
+		FunctionName           string `json:"function_name"`
+		DisableModelInvocation bool   `json:"disable_model_invocation,omitempty"`
+		UpdatedAt              string `json:"updated_at"`
 	}
 	result := make([]skillSummary, 0, len(skills))
 	for _, sk := range skills {
 		result = append(result, skillSummary{
-			ID:           sk.ID,
-			Name:         sk.Name,
-			Description:  sk.Description,
-			FunctionName: sk.FunctionName,
-			UpdatedAt:    sk.UpdatedAt.Format(time.RFC3339),
+			ID:                     sk.ID,
+			Name:                   sk.Name,
+			Description:            sk.Description,
+			FunctionName:           sk.FunctionName,
+			DisableModelInvocation: sk.DisableModelInvocation,
+			UpdatedAt:              sk.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -99,13 +103,14 @@ func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":            sk.ID,
-		"name":          sk.Name,
-		"description":   sk.Description,
-		"function_name": sk.FunctionName,
-		"created_by":    sk.CreatedBy,
-		"created_at":    sk.CreatedAt.Format(time.RFC3339),
-		"updated_at":    sk.UpdatedAt.Format(time.RFC3339),
+		"id":                       sk.ID,
+		"name":                     sk.Name,
+		"description":              sk.Description,
+		"function_name":            sk.FunctionName,
+		"disable_model_invocation": sk.DisableModelInvocation,
+		"created_by":               sk.CreatedBy,
+		"created_at":               sk.CreatedAt.Format(time.RFC3339),
+		"updated_at":               sk.UpdatedAt.Format(time.RFC3339),
 	})
 }
 
@@ -119,8 +124,9 @@ func (s *Server) handleUpdateSkill(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	var req struct {
-		Description  string `json:"description"`
-		FunctionName string `json:"function_name"`
+		Description            string `json:"description"`
+		FunctionName           string `json:"function_name"`
+		DisableModelInvocation bool   `json:"disable_model_invocation"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrBadRequest)
@@ -131,17 +137,18 @@ func (s *Server) handleUpdateSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sk, err := s.skillStore.Update(r.Context(), name, req.Description, req.FunctionName)
+	sk, err := s.skillStore.Update(r.Context(), name, req.Description, req.FunctionName, req.DisableModelInvocation)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":            sk.ID,
-		"name":          sk.Name,
-		"function_name": sk.FunctionName,
-		"updated_at":    sk.UpdatedAt.Format(time.RFC3339),
+		"id":                       sk.ID,
+		"name":                     sk.Name,
+		"function_name":            sk.FunctionName,
+		"disable_model_invocation": sk.DisableModelInvocation,
+		"updated_at":               sk.UpdatedAt.Format(time.RFC3339),
 	})
 }
 

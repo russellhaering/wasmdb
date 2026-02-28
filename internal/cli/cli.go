@@ -139,7 +139,7 @@ func Run(ctx context.Context, argv []string, cfg RunConfig) error {
 // Flags are --key value or --key=value. Boolean flags like --json have no value.
 func parseFlags(args []string) (positional []string, flags map[string][]string, err error) {
 	flags = make(map[string][]string)
-	boolFlags := map[string]bool{"json": true}
+	boolFlags := map[string]bool{"json": true, "manual-only": true}
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]

@@ -461,12 +461,13 @@ func parseSSE(r io.Reader, ch chan<- cli.ChatEvent) {
 	}
 }
 
-func (c *Client) CreateSkill(ctx context.Context, name, description, functionName string) (*cli.SkillInfo, error) {
+func (c *Client) CreateSkill(ctx context.Context, name, description, functionName string, disableModelInvocation bool) (*cli.SkillInfo, error) {
 	body := struct {
-		Name         string `json:"name"`
-		Description  string `json:"description"`
-		FunctionName string `json:"function_name"`
-	}{Name: name, Description: description, FunctionName: functionName}
+		Name                   string `json:"name"`
+		Description            string `json:"description"`
+		FunctionName           string `json:"function_name"`
+		DisableModelInvocation bool   `json:"disable_model_invocation"`
+	}{Name: name, Description: description, FunctionName: functionName, DisableModelInvocation: disableModelInvocation}
 
 	var resp cli.SkillInfo
 	if err := c.do(ctx, http.MethodPost, "/v1/skills", body, &resp); err != nil {
@@ -491,11 +492,12 @@ func (c *Client) GetSkill(ctx context.Context, name string) (*cli.SkillDetail, e
 	return &resp, nil
 }
 
-func (c *Client) UpdateSkill(ctx context.Context, name, description, functionName string) (*cli.SkillInfo, error) {
+func (c *Client) UpdateSkill(ctx context.Context, name, description, functionName string, disableModelInvocation bool) (*cli.SkillInfo, error) {
 	body := struct {
-		Description  string `json:"description"`
-		FunctionName string `json:"function_name"`
-	}{Description: description, FunctionName: functionName}
+		Description            string `json:"description"`
+		FunctionName           string `json:"function_name"`
+		DisableModelInvocation bool   `json:"disable_model_invocation"`
+	}{Description: description, FunctionName: functionName, DisableModelInvocation: disableModelInvocation}
 
 	var resp cli.SkillInfo
 	if err := c.do(ctx, http.MethodPut, "/v1/skills/"+name, body, &resp); err != nil {

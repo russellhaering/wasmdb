@@ -52,6 +52,7 @@ var SystemTables = []SystemTableDef{
 				{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
 				{Name: "description", Type: document.FieldTypeString},
 				{Name: "function_name", Type: document.FieldTypeString, Indexed: true},
+				{Name: "disable_model_invocation", Type: document.FieldTypeBool},
 				{Name: "created_by", Type: document.FieldTypeString, Required: true, Indexed: true},
 				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
 			},

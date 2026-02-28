@@ -15,13 +15,14 @@ const skillsTable = "_skills"
 
 // Skill represents a stored skill.
 type Skill struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description,omitempty"`
-	FunctionName string    `json:"function_name"`
-	CreatedBy    string    `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                     string    `json:"id"`
+	Name                   string    `json:"name"`
+	Description            string    `json:"description,omitempty"`
+	FunctionName           string    `json:"function_name"`
+	DisableModelInvocation bool      `json:"disable_model_invocation,omitempty"`
+	CreatedBy              string    `json:"created_by"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // Store handles CRUD and execution operations for skills.
@@ -37,7 +38,7 @@ func NewStore(registry *database.Registry, fnStore *functions.Store, fnEngine *f
 }
 
 // Create creates a new skill.
-func (s *Store) Create(ctx context.Context, name, description, functionName, userID string) (*Skill, error) {
+func (s *Store) Create(ctx context.Context, name, description, functionName, userID string, disableModelInvocation bool) (*Skill, error) {
 	existing, err := s.Get(ctx, name)
 	if err != nil {
 		return nil, err
@@ -58,11 +59,12 @@ func (s *Store) Create(ctx context.Context, name, description, functionName, use
 	now := time.Now().UTC()
 	doc := &document.Document{
 		Attributes: map[string]any{
-			"name":          name,
-			"description":   description,
-			"function_name": functionName,
-			"created_by":    userID,
-			"updated_at":    now.Format(time.RFC3339),
+			"name":                     name,
+			"description":              description,
+			"function_name":            functionName,
+			"disable_model_invocation": disableModelInvocation,
+			"created_by":               userID,
+			"updated_at":               now.Format(time.RFC3339),
 		},
 	}
 
@@ -71,13 +73,14 @@ func (s *Store) Create(ctx context.Context, name, description, functionName, use
 	}
 
 	return &Skill{
-		ID:           doc.ID,
-		Name:         name,
-		Description:  description,
-		FunctionName: functionName,
-		CreatedBy:    userID,
-		CreatedAt:    doc.CreatedAt,
-		UpdatedAt:    now,
+		ID:                     doc.ID,
+		Name:                   name,
+		Description:            description,
+		FunctionName:           functionName,
+		DisableModelInvocation: disableModelInvocation,
+		CreatedBy:              userID,
+		CreatedAt:              doc.CreatedAt,
+		UpdatedAt:              now,
 	}, nil
 }
 
@@ -121,7 +124,7 @@ func (s *Store) List(ctx context.Context) ([]*Skill, error) {
 }
 
 // Update updates skill metadata.
-func (s *Store) Update(ctx context.Context, name, description, functionName string) (*Skill, error) {
+func (s *Store) Update(ctx context.Context, name, description, functionName string, disableModelInvocation bool) (*Skill, error) {
 	existing, err := s.Get(ctx, name)
 	if err != nil {
 		return nil, err
@@ -143,11 +146,12 @@ func (s *Store) Update(ctx context.Context, name, description, functionName stri
 	doc := &document.Document{
 		ID: existing.ID,
 		Attributes: map[string]any{
-			"name":          name,
-			"description":   description,
-			"function_name": functionName,
-			"created_by":    existing.CreatedBy,
-			"updated_at":    now.Format(time.RFC3339),
+			"name":                     name,
+			"description":              description,
+			"function_name":            functionName,
+			"disable_model_invocation": disableModelInvocation,
+			"created_by":               existing.CreatedBy,
+			"updated_at":               now.Format(time.RFC3339),
 		},
 	}
 
@@ -157,6 +161,7 @@ func (s *Store) Update(ctx context.Context, name, description, functionName stri
 
 	existing.Description = description
 	existing.FunctionName = functionName
+	existing.DisableModelInvocation = disableModelInvocation
 	existing.UpdatedAt = now
 	return existing, nil
 }
@@ -232,6 +237,9 @@ func docToSkill(doc *document.Document) *Skill {
 	}
 	if v, ok := doc.Attributes["function_name"].(string); ok {
 		sk.FunctionName = v
+	}
+	if v, ok := doc.Attributes["disable_model_invocation"].(bool); ok {
+		sk.DisableModelInvocation = v
 	}
 	if v, ok := doc.Attributes["created_by"].(string); ok {
 		sk.CreatedBy = v

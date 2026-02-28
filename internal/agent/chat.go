@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -149,11 +150,19 @@ console.log() output is captured and returned in the result.
 
 Use manage_function to save frequently-needed code as named stored functions that can be invoked later.
 
-## Skills
+## Skills (Progressive Disclosure)
 
-Use manage_skill to create reusable named capabilities that map to stored functions,
-and to execute skills by name with params.
-Prefer skills for recurring workflows and stable automations users may want to rerun.`
+Use skills with progressive disclosure:
+- First, inspect the compact skill catalog (names + short descriptions) via list_skills_catalog.
+- Do NOT load full skill details unless needed.
+- When you decide to use a skill, fetch details with get_skill_detail and then execute via manage_skill action=exec.
+
+Skill routing rules:
+- Prefer auto-invoking a relevant skill when confidence is high and risk is low.
+- If a skill is manual-only, never auto-invoke it; ask the user to confirm and then invoke.
+- If no skill clearly matches, proceed with normal tools.
+
+Use manage_skill to create/update/get/list/delete/exec skills.`
 
 const maxCachedSessions = 100
 
@@ -391,7 +400,12 @@ func (cm *ChatManager) StreamMessage(ctx context.Context, sessionID, userID, mes
 		defer close(events)
 		defer cs.mu.Unlock()
 
-		session, err := cm.agent.NewSessionWithHistory(ctx, cs.history, message)
+		prompt := message
+		if catalog := cm.buildSkillsCatalogPrompt(ctx); catalog != "" {
+			prompt = catalog + "\n\nUser request:\n" + message
+		}
+
+		session, err := cm.agent.NewSessionWithHistory(ctx, cs.history, prompt)
 		if err != nil {
 			events <- agent.Event{Type: agent.EventError, Error: err}
 			return
@@ -499,4 +513,45 @@ func (cm *ChatManager) DeleteSession(ctx context.Context, sessionID, userID stri
 	cm.mu.Unlock()
 
 	return nil
+}
+
+// buildSkillsCatalogPrompt injects a compact skill catalog (name + description + flags)
+// so the model can discover capabilities without loading full skill definitions.
+func (cm *ChatManager) buildSkillsCatalogPrompt(ctx context.Context) string {
+	tbl, err := cm.registry.GetTable(ctx, "_skills")
+	if err != nil {
+		return ""
+	}
+
+	docs, _, err := tbl.ListDocuments(ctx, 500, "")
+	if err != nil || len(docs) == 0 {
+		return ""
+	}
+
+	const maxChars = 4000
+	var b strings.Builder
+	b.WriteString("Available skills catalog (compact; fetch detail only when needed):\n")
+
+	for _, d := range docs {
+		name, _ := d.Attributes["name"].(string)
+		if name == "" {
+			continue
+		}
+		desc, _ := d.Attributes["description"].(string)
+		fn, _ := d.Attributes["function_name"].(string)
+		manualOnly, _ := d.Attributes["disable_model_invocation"].(bool)
+		if desc == "" {
+			desc = "(no description)"
+		}
+		line := fmt.Sprintf("- %s: %s [function=%s, manual_only=%t]\n", name, desc, fn, manualOnly)
+		if b.Len()+len(line) > maxChars {
+			break
+		}
+		b.WriteString(line)
+	}
+
+	if b.Len() == 0 {
+		return ""
+	}
+	return b.String()
 }
