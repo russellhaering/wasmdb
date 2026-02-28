@@ -16,18 +16,35 @@ import (
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/wasmdb/internal/mcpservers"
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
 )
 
+// TableServerResult holds the MCP server and a function to set the server group
+// (which is only available after Connect).
+type TableServerResult struct {
+	Server  *mcp.Server
+	handler *dbHandler
+}
+
+// SetServerGroup wires the server group into the handler so search_tools works.
+func (r *TableServerResult) SetServerGroup(sg *mcpx.ServerGroup) {
+	r.handler.serverGroup = sg
+}
+
 // NewTableServer creates an MCP server exposing wasmdb table operations as tools.
-func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store, skillStore *skills.Store, memoryStore *memory.Store, subAgentModel, anthropicAPIKey string) *mcp.Server {
+func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store, skillStore *skills.Store, memoryStore *memory.Store, subAgentModel, anthropicAPIKey string, mcpServerStore ...*mcpservers.Store) *TableServerResult {
+	var mcpStore *mcpservers.Store
+	if len(mcpServerStore) > 0 {
+		mcpStore = mcpServerStore[0]
+	}
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "wasmdb-table",
 		Version: "v0.1.0",
 	}, nil)
 
-	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, memoryStore: memoryStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
+	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, memoryStore: memoryStore, mcpServerStore: mcpStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_tables",
@@ -120,13 +137,23 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 	}, h.manageMemory)
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "manage_mcp_server",
+		Description: "Register, update, get, list, or delete external MCP server integrations. These servers provide additional tools to the agent.",
+	}, h.manageMCPServer)
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "search_tools",
+		Description: "Search for tools across all connected MCP servers (both built-in and external). Use to discover available tools by keyword.",
+	}, h.searchTools)
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name: "delegate_subagent",
 		Description: "Delegate a focused sub-task to a one-level-deep sub-agent with optional model override. " +
 			"Use this for research/summarization/planning when isolating context helps. " +
 			"Input: {task, model?, max_turns?}. Model may be an alias like sonnet/opus/haiku.",
 	}, h.delegateSubagent)
 
-	return srv
+	return &TableServerResult{Server: srv, handler: h}
 }
 
 type dbHandler struct {
@@ -135,8 +162,11 @@ type dbHandler struct {
 	fnStore         *functions.Store
 	skillStore      *skills.Store
 	memoryStore     *memory.Store
+	mcpServerStore  *mcpservers.Store
 	subAgentModel   string
 	anthropicAPIKey string
+	// serverGroup is set by the chat manager so tools can query it.
+	serverGroup     *mcpx.ServerGroup
 }
 
 // --- Tool input types ---
@@ -440,6 +470,23 @@ type manageMemoryInput struct {
 	Scope   string   `json:"scope,omitempty" jsonschema:"Memory scope: user or session"`
 	Tags    []string `json:"tags,omitempty" jsonschema:"Optional tags"`
 	Pinned  bool     `json:"pinned,omitempty" jsonschema:"Pinned flag for create/update/pin"`
+}
+
+type manageMCPServerInput struct {
+	Action      string            `json:"action" jsonschema:"Action: register, update, get, list, or delete"`
+	Name        string            `json:"name,omitempty" jsonschema:"Server name (required for register, update, get, delete)"`
+	Description string            `json:"description,omitempty" jsonschema:"Server description"`
+	Transport   string            `json:"transport,omitempty" jsonschema:"Transport type: streamable-http or stdio (required for register, update)"`
+	URL         string            `json:"url,omitempty" jsonschema:"Server URL (for streamable-http transport)"`
+	Command     string            `json:"command,omitempty" jsonschema:"Command to run (for stdio transport)"`
+	Args        []string          `json:"args,omitempty" jsonschema:"Command arguments (for stdio transport)"`
+	Env         []string          `json:"env,omitempty" jsonschema:"Environment variables KEY=VALUE (for stdio transport)"`
+	Headers     map[string]string `json:"headers,omitempty" jsonschema:"HTTP headers (for streamable-http transport)"`
+	Enabled     *bool             `json:"enabled,omitempty" jsonschema:"Whether the server is enabled (default true)"`
+}
+
+type searchToolsInput struct {
+	Query string `json:"query,omitempty" jsonschema:"Search query to filter tools by name or description. Empty returns all."`
 }
 
 type delegateSubagentInput struct {
@@ -766,6 +813,102 @@ func (h *dbHandler) manageMemory(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 }
 
+func (h *dbHandler) manageMCPServer(ctx context.Context, _ *mcp.CallToolRequest, input manageMCPServerInput) (*mcp.CallToolResult, any, error) {
+	if h.mcpServerStore == nil {
+		return textError("MCP server management is not available."), nil, nil
+	}
+
+	switch input.Action {
+	case "register":
+		if input.Name == "" || input.Transport == "" {
+			return textError("name and transport are required for register"), nil, nil
+		}
+		enabled := true
+		if input.Enabled != nil {
+			enabled = *input.Enabled
+		}
+		srv, err := h.mcpServerStore.Create(ctx, input.Name, input.Description, input.Transport, input.URL, input.Command, input.Args, input.Env, input.Headers, enabled, "")
+		if err != nil {
+			return textError("Failed to register MCP server: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":      srv.ID,
+			"name":    srv.Name,
+			"message": "MCP server registered successfully. It will be connected on the next chat session.",
+		}), nil, nil
+
+	case "update":
+		if input.Name == "" || input.Transport == "" {
+			return textError("name and transport are required for update"), nil, nil
+		}
+		enabled := true
+		if input.Enabled != nil {
+			enabled = *input.Enabled
+		}
+		srv, err := h.mcpServerStore.Update(ctx, input.Name, input.Description, input.Transport, input.URL, input.Command, input.Args, input.Env, input.Headers, enabled)
+		if err != nil {
+			return textError("Failed to update MCP server: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":      srv.ID,
+			"name":    srv.Name,
+			"message": "MCP server updated. Changes take effect on the next chat session.",
+		}), nil, nil
+
+	case "get":
+		if input.Name == "" {
+			return textError("name is required for get"), nil, nil
+		}
+		srv, err := h.mcpServerStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to get MCP server: " + err.Error()), nil, nil
+		}
+		if srv == nil {
+			return textError("MCP server not found: " + input.Name), nil, nil
+		}
+		return jsonResult(srv), nil, nil
+
+	case "list":
+		servers, err := h.mcpServerStore.List(ctx)
+		if err != nil {
+			return textError("Failed to list MCP servers: " + err.Error()), nil, nil
+		}
+		if len(servers) == 0 {
+			return textResult("No MCP servers registered."), nil, nil
+		}
+		return jsonResult(servers), nil, nil
+
+	case "delete":
+		if input.Name == "" {
+			return textError("name is required for delete"), nil, nil
+		}
+		if err := h.mcpServerStore.Delete(ctx, input.Name); err != nil {
+			return textError("Failed to delete MCP server: " + err.Error()), nil, nil
+		}
+		return textResult(fmt.Sprintf("MCP server %q deleted successfully.", input.Name)), nil, nil
+
+	default:
+		return textError("Unknown action: " + input.Action + ". Use register, update, get, list, or delete."), nil, nil
+	}
+}
+
+func (h *dbHandler) searchTools(ctx context.Context, _ *mcp.CallToolRequest, input searchToolsInput) (*mcp.CallToolResult, any, error) {
+	if h.serverGroup == nil {
+		return textError("Tool search is not available."), nil, nil
+	}
+
+	results, err := searchToolsInGroup(ctx, h.serverGroup, input.Query)
+	if err != nil {
+		return textError("Search failed: " + err.Error()), nil, nil
+	}
+
+	if len(results) == 0 {
+		return textResult("No tools found matching query."), nil, nil
+	}
+
+	return jsonResult(results), nil, nil
+}
+
 func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolRequest, input delegateSubagentInput) (*mcp.CallToolResult, any, error) {
 	if strings.TrimSpace(input.Task) == "" {
 		return textError("task is required"), nil, nil
@@ -793,7 +936,8 @@ func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolReque
 		maxTurns = 20
 	}
 
-	sg := mcpxSingleServerGroup(NewTableServer(h.registry, h.fnEngine, h.fnStore, h.skillStore, h.memoryStore, h.subAgentModel, h.anthropicAPIKey))
+	tableResult := NewTableServer(h.registry, h.fnEngine, h.fnStore, h.skillStore, h.memoryStore, h.subAgentModel, h.anthropicAPIKey)
+	sg := mcpxSingleServerGroup(tableResult.Server)
 	defer sg.Close()
 	if err := sg.Connect(ctx); err != nil {
 		return textError("failed to start sub-agent tools: " + err.Error()), nil, nil

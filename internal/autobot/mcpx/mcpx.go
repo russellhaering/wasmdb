@@ -13,11 +13,14 @@ import (
 )
 
 // ServerEntry holds a named MCP server along with its in-process transport pair.
+// For external servers (no Server field), the clientSession is connected via
+// CommandTransport or StreamableClientTransport.
 type ServerEntry struct {
 	Name          string
-	Server        *mcp.Server
-	serverSession *mcp.ServerSession
+	Server        *mcp.Server          // nil for external servers
+	serverSession *mcp.ServerSession   // nil for external servers
 	clientSession *mcp.ClientSession
+	external      bool                 // true for externally-connected servers
 }
 
 // ServerGroup manages multiple in-process MCP servers.
@@ -31,13 +34,24 @@ func NewServerGroup() *ServerGroup {
 	return &ServerGroup{}
 }
 
-// AddServer registers an MCP server with the group.
+// AddServer registers an in-process MCP server with the group.
 func (sg *ServerGroup) AddServer(name string, server *mcp.Server) {
 	sg.mu.Lock()
 	defer sg.mu.Unlock()
 	sg.servers = append(sg.servers, &ServerEntry{
 		Name:   name,
 		Server: server,
+	})
+}
+
+// AddExternalSession registers a pre-connected external MCP client session.
+func (sg *ServerGroup) AddExternalSession(name string, session *mcp.ClientSession) {
+	sg.mu.Lock()
+	defer sg.mu.Unlock()
+	sg.servers = append(sg.servers, &ServerEntry{
+		Name:          name,
+		clientSession: session,
+		external:      true,
 	})
 }
 
@@ -83,6 +97,77 @@ func (sg *ServerGroup) Close() error {
 		}
 	}
 	return nil
+}
+
+// ServerNames returns the names of all registered servers.
+func (sg *ServerGroup) ServerNames() []string {
+	sg.mu.Lock()
+	defer sg.mu.Unlock()
+	names := make([]string, len(sg.servers))
+	for i, e := range sg.servers {
+		names[i] = e.Name
+	}
+	return names
+}
+
+// ListToolsForServer returns tools from a specific named server.
+func (sg *ServerGroup) ListToolsForServer(ctx context.Context, serverName string) ([]*mcp.Tool, error) {
+	sg.mu.Lock()
+	var entry *ServerEntry
+	for _, e := range sg.servers {
+		if e.Name == serverName {
+			entry = e
+			break
+		}
+	}
+	sg.mu.Unlock()
+
+	if entry == nil {
+		return nil, fmt.Errorf("server %q not found", serverName)
+	}
+	if entry.clientSession == nil {
+		return nil, fmt.Errorf("server %q not connected", serverName)
+	}
+
+	result, err := entry.clientSession.ListTools(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing tools from %q: %w", serverName, err)
+	}
+	return result.Tools, nil
+}
+
+// ListAllToolsDetailed returns all tools with their source server names.
+func (sg *ServerGroup) ListAllToolsDetailed(ctx context.Context) ([]ToolInfo, error) {
+	sg.mu.Lock()
+	entries := make([]*ServerEntry, len(sg.servers))
+	copy(entries, sg.servers)
+	sg.mu.Unlock()
+
+	var tools []ToolInfo
+	for _, entry := range entries {
+		if entry.clientSession == nil {
+			continue
+		}
+		result, err := entry.clientSession.ListTools(ctx, nil)
+		if err != nil {
+			continue // skip servers that error
+		}
+		for _, t := range result.Tools {
+			tools = append(tools, ToolInfo{
+				ServerName:  entry.Name,
+				Name:        t.Name,
+				Description: t.Description,
+			})
+		}
+	}
+	return tools, nil
+}
+
+// ToolInfo provides metadata about a tool and its source server.
+type ToolInfo struct {
+	ServerName  string `json:"server"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // Servers returns a snapshot of all registered server entries.

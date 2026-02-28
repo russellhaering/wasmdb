@@ -76,6 +76,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/memories/{id}", s.handleDeleteMemory)
 	mux.HandleFunc("GET /v1/memories/catalog", s.handleMemoryCatalog)
 
+	// MCP Servers.
+	mux.HandleFunc("POST /v1/mcp-servers", s.handleCreateMCPServer)
+	mux.HandleFunc("GET /v1/mcp-servers", s.handleListMCPServers)
+	mux.HandleFunc("GET /v1/mcp-servers/{name}", s.handleGetMCPServer)
+	mux.HandleFunc("PUT /v1/mcp-servers/{name}", s.handleUpdateMCPServer)
+	mux.HandleFunc("DELETE /v1/mcp-servers/{name}", s.handleDeleteMCPServer)
+
 	// Health.
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)

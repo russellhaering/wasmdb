@@ -23,8 +23,10 @@ Introduce first-class concepts of "agents", "skills", and "memories", all stored
 **Done (skills):** `_skills` system table, skills store (`internal/skills`) with CRUD + execute (via linked stored function), REST API (`POST/GET/PUT/DELETE /v1/skills`, `POST /v1/skills/{name}/exec`), CLI commands (`skill create/list/get/update/delete/exec`), agent `manage_skill` + progressive-disclosure tools (`list_skills_catalog`, `get_skill_detail`), compact catalog injection in chat, and manual-only skill control (`disable_model_invocation`).
 **Remaining:** Implement skill + memory selection/ranking heuristic for catalog budgeting at scale (intent-match + recency + pinned + tag/name boosts, budget-aware packing, and selective detail fetch), plus agent first-class models + APIs.
 
-## Agent MCP Server Configuration
-Allow MCP servers to be configured per-agent via a system table. This lets each agent have its own set of external tool integrations (e.g. Slack, GitHub, databases) without hardcoding them in the server config.
+## Agent MCP Server Configuration ✅
+MCP servers can be registered via the `_mcp_servers` system table. Supports `streamable-http` (URL-based) and `stdio` (command-based) transports with custom headers and environment variables. Registered servers are automatically connected when chat sessions start, making their tools available to the agent.
+
+**Done:** `_mcp_servers` system table, `internal/mcpservers` store (CRUD), REST API (`POST/GET/PUT/DELETE /v1/mcp-servers`), CLI commands (`mcp register/list/get/update/delete`), agent `manage_mcp_server` tool, `search_tools` tool for cross-server tool discovery, automatic connection to enabled servers at chat startup via `mcp.StreamableClientTransport` and `mcp.CommandTransport`.
 
 ## Chat Agent Activity Indicator ✅
 Implemented real SSE streaming (replaced fake batch-then-emit with `anthropic.NewStreaming()` + `Accumulate()`). Text deltas now stream token-by-token to the browser. Tool call indicators have animated dots (`...` CSS animation) while pending, switching to "done"/"error" on completion. Combined with token-level streaming, the UI no longer feels stuck during agent turns.

@@ -82,6 +82,11 @@ wasmdb fn delete myfn                    # delete stored function
 wasmdb fn exec myfn --params '{"x":1}'   # execute stored function
 wasmdb exec --file script.js             # execute ephemeral JS
 wasmdb exec --code 'db.tables()'         # inline ephemeral JS
+wasmdb mcp register srv --transport streamable-http --url URL  # register MCP server
+wasmdb mcp list                          # list registered MCP servers
+wasmdb mcp get srv                       # get MCP server details
+wasmdb mcp update srv --transport stdio --command cmd  # update MCP server
+wasmdb mcp delete srv                    # delete MCP server
 wasmdb chat                              # interactive chat
 ```
 

@@ -573,3 +573,62 @@ func (c *Client) UpdateMemory(ctx context.Context, id, scope, title, summary str
 func (c *Client) DeleteMemory(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/memories/"+id, nil, nil)
 }
+
+func (c *Client) CreateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*cli.MCPServerInfo, error) {
+	body := struct {
+		Name        string            `json:"name"`
+		Description string            `json:"description"`
+		Transport   string            `json:"transport"`
+		URL         string            `json:"url"`
+		Command     string            `json:"command"`
+		Args        []string          `json:"args,omitempty"`
+		Env         []string          `json:"env,omitempty"`
+		Headers     map[string]string `json:"headers,omitempty"`
+		Enabled     bool              `json:"enabled"`
+	}{Name: name, Description: description, Transport: transport, URL: url, Command: command, Args: args, Env: env, Headers: headers, Enabled: enabled}
+
+	var resp cli.MCPServerInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/mcp-servers", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListMCPServers(ctx context.Context) ([]cli.MCPServerSummary, error) {
+	var resp []cli.MCPServerSummary
+	if err := c.do(ctx, http.MethodGet, "/v1/mcp-servers", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) GetMCPServer(ctx context.Context, name string) (*cli.MCPServerDetail, error) {
+	var resp cli.MCPServerDetail
+	if err := c.do(ctx, http.MethodGet, "/v1/mcp-servers/"+name, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*cli.MCPServerInfo, error) {
+	body := struct {
+		Description string            `json:"description"`
+		Transport   string            `json:"transport"`
+		URL         string            `json:"url"`
+		Command     string            `json:"command"`
+		Args        []string          `json:"args,omitempty"`
+		Env         []string          `json:"env,omitempty"`
+		Headers     map[string]string `json:"headers,omitempty"`
+		Enabled     bool              `json:"enabled"`
+	}{Description: description, Transport: transport, URL: url, Command: command, Args: args, Env: env, Headers: headers, Enabled: enabled}
+
+	var resp cli.MCPServerInfo
+	if err := c.do(ctx, http.MethodPut, "/v1/mcp-servers/"+name, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteMCPServer(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/mcp-servers/"+name, nil, nil)
+}

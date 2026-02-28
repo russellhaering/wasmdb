@@ -18,6 +18,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/wasmdb/internal/mcpservers"
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
 )
@@ -165,6 +166,16 @@ Skill routing rules:
 
 Use manage_skill to create/update/get/list/delete/exec skills.
 
+## External MCP Servers
+
+You can register, manage, and use external MCP servers that provide additional tools.
+Use manage_mcp_server to register/update/get/list/delete MCP server integrations.
+Supported transports: streamable-http (URL-based) and stdio (command-based).
+Registered servers are connected automatically when a chat session starts.
+
+Use search_tools to discover tools across all connected servers (both built-in and external).
+This is useful when you need to find a capability you don't have a specific tool for.
+
 ## Memories (Progressive Disclosure)
 
 Use memory with progressive disclosure:
@@ -194,6 +205,7 @@ type ChatConfig struct {
 	Registry        *database.Registry
 	FnEngine        *functions.Engine
 	FnStore         *functions.Store
+	MCPServerStore  *mcpservers.Store
 }
 
 // ChatManager manages chat sessions for the web interface.
@@ -229,11 +241,20 @@ func NewChatManager(ctx context.Context, cfg ChatConfig) (*ChatManager, error) {
 	servers := mcpx.NewServerGroup()
 	skillStore := skills.NewStore(cfg.Registry, cfg.FnStore, cfg.FnEngine)
 	memoryStore := memory.NewStore(cfg.Registry)
-	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore, skillStore, memoryStore, subAgentModel, cfg.AnthropicAPIKey))
+	tableServer := NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore, skillStore, memoryStore, subAgentModel, cfg.AnthropicAPIKey, cfg.MCPServerStore)
+	servers.AddServer("table", tableServer.Server)
 
 	if err := servers.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("connecting MCP servers: %w", err)
 	}
+
+	// Connect to registered external MCP servers.
+	if cfg.MCPServerStore != nil {
+		connectExternalMCPServers(ctx, cfg.MCPServerStore, servers)
+	}
+
+	// Wire the server group into the handler so search_tools works.
+	tableServer.SetServerGroup(servers)
 
 	a := agent.NewAgent(agent.Config{
 		Model:        model,

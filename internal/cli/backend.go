@@ -147,6 +147,12 @@ type Backend interface {
 	UpdateMemory(ctx context.Context, id, scope, title, summary string, tags []string, pinned bool) (*MemoryInfo, error)
 	DeleteMemory(ctx context.Context, id string) error
 
+	CreateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*MCPServerInfo, error)
+	ListMCPServers(ctx context.Context) ([]MCPServerSummary, error)
+	GetMCPServer(ctx context.Context, name string) (*MCPServerDetail, error)
+	UpdateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*MCPServerInfo, error)
+	DeleteMCPServer(ctx context.Context, name string) error
+
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)
 
@@ -178,6 +184,45 @@ type MemoryCatalogEntry struct {
 	Tags      []string `json:"tags,omitempty"`
 	Pinned    bool     `json:"pinned,omitempty"`
 	UpdatedAt string   `json:"updated_at"`
+}
+
+// MCPServerInfo holds basic MCP server metadata returned after create/update.
+type MCPServerInfo struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Transport string `json:"transport"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// MCPServerSummary holds MCP server metadata for list display.
+type MCPServerSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Transport   string `json:"transport"`
+	URL         string `json:"url,omitempty"`
+	Command     string `json:"command,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// MCPServerDetail holds full MCP server details.
+type MCPServerDetail struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Transport   string            `json:"transport"`
+	URL         string            `json:"url,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Env         []string          `json:"env,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Enabled     bool              `json:"enabled"`
+	CreatedBy   string            `json:"created_by,omitempty"`
+	CreatedAt   string            `json:"created_at"`
+	UpdatedAt   string            `json:"updated_at"`
 }
 
 type ChatEvent struct {

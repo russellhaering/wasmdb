@@ -59,6 +59,21 @@ var SystemTables = []SystemTableDef{
 		},
 	},
 	{
+		Name: "_mcp_servers",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "description", Type: document.FieldTypeString},
+				{Name: "transport", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "url", Type: document.FieldTypeString},
+				{Name: "command", Type: document.FieldTypeString},
+				{Name: "enabled", Type: document.FieldTypeBool, Indexed: true},
+				{Name: "created_by", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+			},
+		},
+	},
+	{
 		Name: "_memories",
 		Schema: &document.Schema{
 			Fields: []document.FieldDefinition{
