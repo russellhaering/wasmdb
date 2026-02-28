@@ -23,10 +23,19 @@ type MCPServer struct {
 	Args        []string          `json:"args,omitempty"`        // for stdio
 	Env         []string          `json:"env,omitempty"`         // for stdio (KEY=VALUE pairs)
 	Headers     map[string]string `json:"headers,omitempty"`     // for streamable-http
+	OAuth       *OAuthConfig      `json:"oauth,omitempty"`       // OAuth client_credentials config
 	Enabled     bool              `json:"enabled"`
 	CreatedBy   string            `json:"created_by"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+// OAuthConfig holds OAuth 2.0 client_credentials configuration for MCP servers.
+type OAuthConfig struct {
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret"`
+	TokenURL     string   `json:"token_url"`
+	Scopes       []string `json:"scopes,omitempty"`
 }
 
 // Store handles CRUD operations for MCP server registrations.
@@ -40,7 +49,7 @@ func NewStore(registry *database.Registry) *Store {
 }
 
 // Create creates a new MCP server registration.
-func (s *Store) Create(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool, userID string) (*MCPServer, error) {
+func (s *Store) Create(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, oauth *OAuthConfig, enabled bool, userID string) (*MCPServer, error) {
 	if err := validateTransport(transport); err != nil {
 		return nil, err
 	}
@@ -59,21 +68,24 @@ func (s *Store) Create(ctx context.Context, name, description, transport, url, c
 	}
 
 	now := time.Now().UTC()
-	doc := &document.Document{
-		Attributes: map[string]any{
-			"name":        name,
-			"description": description,
-			"transport":   transport,
-			"url":         url,
-			"command":     command,
-			"args":        stringSliceToAny(args),
-			"env":         stringSliceToAny(env),
-			"headers":     stringMapToAny(headers),
-			"enabled":     enabled,
-			"created_by":  userID,
-			"updated_at":  now.Format(time.RFC3339),
-		},
+	attrs := map[string]any{
+		"name":        name,
+		"description": description,
+		"transport":   transport,
+		"url":         url,
+		"command":     command,
+		"args":        stringSliceToAny(args),
+		"env":         stringSliceToAny(env),
+		"headers":     stringMapToAny(headers),
+		"enabled":     enabled,
+		"created_by":  userID,
+		"updated_at":  now.Format(time.RFC3339),
 	}
+	if oauth != nil {
+		attrs["oauth"] = oauthToMap(oauth)
+	}
+
+	doc := &document.Document{Attributes: attrs}
 
 	if err := tbl.PutDocument(ctx, doc); err != nil {
 		return nil, fmt.Errorf("create mcp server: %w", err)
@@ -89,6 +101,7 @@ func (s *Store) Create(ctx context.Context, name, description, transport, url, c
 		Args:        args,
 		Env:         env,
 		Headers:     headers,
+		OAuth:       oauth,
 		Enabled:     enabled,
 		CreatedBy:   userID,
 		CreatedAt:   doc.CreatedAt,
@@ -136,7 +149,7 @@ func (s *Store) List(ctx context.Context) ([]*MCPServer, error) {
 }
 
 // Update updates an MCP server registration.
-func (s *Store) Update(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*MCPServer, error) {
+func (s *Store) Update(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, oauth *OAuthConfig, enabled bool) (*MCPServer, error) {
 	if err := validateTransport(transport); err != nil {
 		return nil, err
 	}
@@ -155,22 +168,24 @@ func (s *Store) Update(ctx context.Context, name, description, transport, url, c
 	}
 
 	now := time.Now().UTC()
-	doc := &document.Document{
-		ID: existing.ID,
-		Attributes: map[string]any{
-			"name":        name,
-			"description": description,
-			"transport":   transport,
-			"url":         url,
-			"command":     command,
-			"args":        stringSliceToAny(args),
-			"env":         stringSliceToAny(env),
-			"headers":     stringMapToAny(headers),
-			"enabled":     enabled,
-			"created_by":  existing.CreatedBy,
-			"updated_at":  now.Format(time.RFC3339),
-		},
+	attrs := map[string]any{
+		"name":        name,
+		"description": description,
+		"transport":   transport,
+		"url":         url,
+		"command":     command,
+		"args":        stringSliceToAny(args),
+		"env":         stringSliceToAny(env),
+		"headers":     stringMapToAny(headers),
+		"enabled":     enabled,
+		"created_by":  existing.CreatedBy,
+		"updated_at":  now.Format(time.RFC3339),
 	}
+	if oauth != nil {
+		attrs["oauth"] = oauthToMap(oauth)
+	}
+
+	doc := &document.Document{ID: existing.ID, Attributes: attrs}
 
 	if err := tbl.PutDocument(ctx, doc); err != nil {
 		return nil, fmt.Errorf("update mcp server: %w", err)
@@ -183,6 +198,7 @@ func (s *Store) Update(ctx context.Context, name, description, transport, url, c
 	existing.Args = args
 	existing.Env = env
 	existing.Headers = headers
+	existing.OAuth = oauth
 	existing.Enabled = enabled
 	existing.UpdatedAt = now
 	return existing, nil
@@ -233,6 +249,7 @@ func docToMCPServer(doc *document.Document) *MCPServer {
 	srv.Args = anyToStringSlice(doc.Attributes["args"])
 	srv.Env = anyToStringSlice(doc.Attributes["env"])
 	srv.Headers = anyToStringMap(doc.Attributes["headers"])
+	srv.OAuth = mapToOAuth(doc.Attributes["oauth"])
 	if v, ok := doc.Attributes["enabled"].(bool); ok {
 		srv.Enabled = v
 	}
@@ -245,6 +262,43 @@ func docToMCPServer(doc *document.Document) *MCPServer {
 		}
 	}
 	return srv
+}
+
+func oauthToMap(o *OAuthConfig) map[string]any {
+	if o == nil {
+		return nil
+	}
+	m := map[string]any{
+		"client_id":     o.ClientID,
+		"client_secret": o.ClientSecret,
+		"token_url":     o.TokenURL,
+	}
+	if len(o.Scopes) > 0 {
+		m["scopes"] = stringSliceToAny(o.Scopes)
+	}
+	return m
+}
+
+func mapToOAuth(v any) *OAuthConfig {
+	m, ok := v.(map[string]any)
+	if !ok || m == nil {
+		return nil
+	}
+	o := &OAuthConfig{}
+	if s, ok := m["client_id"].(string); ok {
+		o.ClientID = s
+	}
+	if s, ok := m["client_secret"].(string); ok {
+		o.ClientSecret = s
+	}
+	if s, ok := m["token_url"].(string); ok {
+		o.TokenURL = s
+	}
+	o.Scopes = anyToStringSlice(m["scopes"])
+	if o.ClientID == "" && o.TokenURL == "" {
+		return nil
+	}
+	return o
 }
 
 func stringSliceToAny(in []string) []any {

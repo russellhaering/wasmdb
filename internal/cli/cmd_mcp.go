@@ -10,7 +10,7 @@ func init() {
 	register(command{
 		noun:        "mcp",
 		verb:        "register",
-		usage:       "wasmdb mcp register <name> --transport <type> [--url <url>] [--command <cmd>] [--args <a1,a2>] [--env <K=V,...>] [--header <K=V,...>] [--description <desc>] [--disabled] [--json]",
+		usage:       "wasmdb mcp register <name> --transport <type> [--url <url>] [--command <cmd>] [--args <a1,a2>] [--env <K=V,...>] [--header <K=V,...>] [--oauth-token-url <url> --oauth-client-id <id> --oauth-client-secret <secret> --oauth-scopes <s1,s2>] [--description <desc>] [--disabled] [--json]",
 		description: "Register an MCP server",
 		run:         mcpRegister,
 	})
@@ -31,7 +31,7 @@ func init() {
 	register(command{
 		noun:        "mcp",
 		verb:        "update",
-		usage:       "wasmdb mcp update <name> --transport <type> [--url <url>] [--command <cmd>] [--args <a1,a2>] [--env <K=V,...>] [--header <K=V,...>] [--description <desc>] [--disabled] [--json]",
+		usage:       "wasmdb mcp update <name> --transport <type> [--url <url>] [--command <cmd>] [--args <a1,a2>] [--env <K=V,...>] [--header <K=V,...>] [--oauth-token-url <url> --oauth-client-id <id> --oauth-client-secret <secret> --oauth-scopes <s1,s2>] [--description <desc>] [--disabled] [--json]",
 		description: "Update an MCP server registration",
 		run:         mcpUpdate,
 	})
@@ -44,7 +44,7 @@ func init() {
 	})
 }
 
-func parseMCPFlags(ctx *cmdContext) (description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) {
+func parseMCPFlags(ctx *cmdContext) (description, transport, url, command string, args, env []string, headers map[string]string, oauth *OAuthConfig, enabled bool) {
 	description = ctx.flag("description")
 	transport = ctx.flag("transport")
 	url = ctx.flag("url")
@@ -73,6 +73,18 @@ func parseMCPFlags(ctx *cmdContext) (description, transport, url, command string
 		_ = json.Unmarshal([]byte(headerJSON), &headers)
 	}
 
+	// OAuth client_credentials
+	if tokenURL := ctx.flag("oauth-token-url"); tokenURL != "" {
+		oauth = &OAuthConfig{
+			ClientID:     ctx.flag("oauth-client-id"),
+			ClientSecret: ctx.flag("oauth-client-secret"),
+			TokenURL:     tokenURL,
+		}
+		if scopeStr := ctx.flag("oauth-scopes"); scopeStr != "" {
+			oauth.Scopes = strings.Split(scopeStr, ",")
+		}
+	}
+
 	return
 }
 
@@ -81,13 +93,13 @@ func mcpRegister(ctx *cmdContext) error {
 		return fmt.Errorf("MCP server name required")
 	}
 	name := ctx.args[0]
-	description, transport, url, command, args, env, headers, enabled := parseMCPFlags(ctx)
+	description, transport, url, command, args, env, headers, oauth, enabled := parseMCPFlags(ctx)
 
 	if transport == "" {
 		return fmt.Errorf("--transport is required (streamable-http or stdio)")
 	}
 
-	srv, err := ctx.backend.CreateMCPServer(ctx, name, description, transport, url, command, args, env, headers, enabled)
+	srv, err := ctx.backend.CreateMCPServer(ctx, name, description, transport, url, command, args, env, headers, oauth, enabled)
 	if err != nil {
 		return err
 	}
@@ -166,13 +178,13 @@ func mcpUpdate(ctx *cmdContext) error {
 		return fmt.Errorf("MCP server name required")
 	}
 	name := ctx.args[0]
-	description, transport, url, command, args, env, headers, enabled := parseMCPFlags(ctx)
+	description, transport, url, command, args, env, headers, oauth, enabled := parseMCPFlags(ctx)
 
 	if transport == "" {
 		return fmt.Errorf("--transport is required (streamable-http or stdio)")
 	}
 
-	srv, err := ctx.backend.UpdateMCPServer(ctx, name, description, transport, url, command, args, env, headers, enabled)
+	srv, err := ctx.backend.UpdateMCPServer(ctx, name, description, transport, url, command, args, env, headers, oauth, enabled)
 	if err != nil {
 		return err
 	}

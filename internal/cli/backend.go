@@ -147,10 +147,10 @@ type Backend interface {
 	UpdateMemory(ctx context.Context, id, scope, title, summary string, tags []string, pinned bool) (*MemoryInfo, error)
 	DeleteMemory(ctx context.Context, id string) error
 
-	CreateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*MCPServerInfo, error)
+	CreateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, oauth *OAuthConfig, enabled bool) (*MCPServerInfo, error)
 	ListMCPServers(ctx context.Context) ([]MCPServerSummary, error)
 	GetMCPServer(ctx context.Context, name string) (*MCPServerDetail, error)
-	UpdateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*MCPServerInfo, error)
+	UpdateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, oauth *OAuthConfig, enabled bool) (*MCPServerInfo, error)
 	DeleteMCPServer(ctx context.Context, name string) error
 
 	Health(ctx context.Context) (*HealthStatus, error)
@@ -219,10 +219,19 @@ type MCPServerDetail struct {
 	Args        []string          `json:"args,omitempty"`
 	Env         []string          `json:"env,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
+	OAuth       *OAuthConfig      `json:"oauth,omitempty"`
 	Enabled     bool              `json:"enabled"`
 	CreatedBy   string            `json:"created_by,omitempty"`
 	CreatedAt   string            `json:"created_at"`
 	UpdatedAt   string            `json:"updated_at"`
+}
+
+// OAuthConfig holds OAuth 2.0 client_credentials configuration.
+type OAuthConfig struct {
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret"`
+	TokenURL     string   `json:"token_url"`
+	Scopes       []string `json:"scopes,omitempty"`
 }
 
 type ChatEvent struct {

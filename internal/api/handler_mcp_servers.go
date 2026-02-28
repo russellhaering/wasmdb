@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/russellhaering/wasmdb/internal/mcpservers"
 )
 
 // handleCreateMCPServer handles POST /v1/mcp-servers.
@@ -14,15 +16,16 @@ func (s *Server) handleCreateMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string            `json:"name"`
-		Description string            `json:"description"`
-		Transport   string            `json:"transport"`
-		URL         string            `json:"url"`
-		Command     string            `json:"command"`
-		Args        []string          `json:"args"`
-		Env         []string          `json:"env"`
-		Headers     map[string]string `json:"headers"`
-		Enabled     *bool             `json:"enabled"`
+		Name        string              `json:"name"`
+		Description string              `json:"description"`
+		Transport   string              `json:"transport"`
+		URL         string              `json:"url"`
+		Command     string              `json:"command"`
+		Args        []string            `json:"args"`
+		Env         []string            `json:"env"`
+		Headers     map[string]string   `json:"headers"`
+		OAuth       *mcpservers.OAuthConfig `json:"oauth"`
+		Enabled     *bool               `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrBadRequest)
@@ -44,7 +47,7 @@ func (s *Server) handleCreateMCPServer(w http.ResponseWriter, r *http.Request) {
 		userID = session.UserID
 	}
 
-	srv, err := s.mcpServerStore.Create(r.Context(), req.Name, req.Description, req.Transport, req.URL, req.Command, req.Args, req.Env, req.Headers, enabled, userID)
+	srv, err := s.mcpServerStore.Create(r.Context(), req.Name, req.Description, req.Transport, req.URL, req.Command, req.Args, req.Env, req.Headers, req.OAuth, enabled, userID)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
@@ -129,14 +132,15 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	var req struct {
-		Description string            `json:"description"`
-		Transport   string            `json:"transport"`
-		URL         string            `json:"url"`
-		Command     string            `json:"command"`
-		Args        []string          `json:"args"`
-		Env         []string          `json:"env"`
-		Headers     map[string]string `json:"headers"`
-		Enabled     *bool             `json:"enabled"`
+		Description string              `json:"description"`
+		Transport   string              `json:"transport"`
+		URL         string              `json:"url"`
+		Command     string              `json:"command"`
+		Args        []string            `json:"args"`
+		Env         []string            `json:"env"`
+		Headers     map[string]string   `json:"headers"`
+		OAuth       *mcpservers.OAuthConfig `json:"oauth"`
+		Enabled     *bool               `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, ErrBadRequest)
@@ -152,7 +156,7 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 		enabled = *req.Enabled
 	}
 
-	srv, err := s.mcpServerStore.Update(r.Context(), name, req.Description, req.Transport, req.URL, req.Command, req.Args, req.Env, req.Headers, enabled)
+	srv, err := s.mcpServerStore.Update(r.Context(), name, req.Description, req.Transport, req.URL, req.Command, req.Args, req.Env, req.Headers, req.OAuth, enabled)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return

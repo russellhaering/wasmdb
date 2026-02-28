@@ -2,10 +2,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
@@ -56,14 +62,20 @@ func connectExternalMCPServer(ctx context.Context, srv *mcpservers.MCPServer) (*
 		st := &mcp.StreamableClientTransport{
 			Endpoint: srv.URL,
 		}
+
+		// Build transport chain: base -> OAuth (if configured) -> headers
+		var rt http.RoundTripper = http.DefaultTransport
+
+		if srv.OAuth != nil && srv.OAuth.TokenURL != "" {
+			rt = newOAuthTransport(srv.OAuth, rt)
+		}
+
 		if len(srv.Headers) > 0 {
-			// Wrap the default HTTP client to inject custom headers.
-			st.HTTPClient = &http.Client{
-				Transport: &headerTransport{
-					headers: srv.Headers,
-					base:    http.DefaultTransport,
-				},
-			}
+			rt = &headerTransport{headers: srv.Headers, base: rt}
+		}
+
+		if rt != http.DefaultTransport {
+			st.HTTPClient = &http.Client{Transport: rt}
 		}
 		transport = st
 
@@ -97,6 +109,89 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set(k, v)
 	}
 	return t.base.RoundTrip(req)
+}
+
+// oauthTransport implements http.RoundTripper and automatically acquires/refreshes
+// an OAuth 2.0 access token using the client_credentials grant.
+type oauthTransport struct {
+	config *mcpservers.OAuthConfig
+	base   http.RoundTripper
+
+	mu          sync.Mutex
+	accessToken string
+	expiry      time.Time
+}
+
+func newOAuthTransport(config *mcpservers.OAuthConfig, base http.RoundTripper) *oauthTransport {
+	return &oauthTransport{config: config, base: base}
+}
+
+func (t *oauthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	token, err := t.token()
+	if err != nil {
+		return nil, fmt.Errorf("oauth token acquisition: %w", err)
+	}
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+token)
+	return t.base.RoundTrip(req)
+}
+
+func (t *oauthTransport) token() (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Return cached token if still valid (with 30s buffer).
+	if t.accessToken != "" && time.Now().Add(30*time.Second).Before(t.expiry) {
+		return t.accessToken, nil
+	}
+
+	// Perform client_credentials grant.
+	data := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {t.config.ClientID},
+		"client_secret": {t.config.ClientSecret},
+	}
+	if len(t.config.Scopes) > 0 {
+		data.Set("scope", strings.Join(t.config.Scopes, " "))
+	}
+
+	resp, err := http.PostForm(t.config.TokenURL, data)
+	if err != nil {
+		return "", fmt.Errorf("token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("reading token response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("parsing token response: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return "", fmt.Errorf("empty access_token in response")
+	}
+
+	t.accessToken = tokenResp.AccessToken
+	if tokenResp.ExpiresIn > 0 {
+		t.expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	} else {
+		// Default to 1 hour if not specified.
+		t.expiry = time.Now().Add(time.Hour)
+	}
+
+	slog.Debug("acquired OAuth token", "expires_in", tokenResp.ExpiresIn)
+	return t.accessToken, nil
 }
 
 // searchToolsInGroup searches for tools across all connected MCP servers

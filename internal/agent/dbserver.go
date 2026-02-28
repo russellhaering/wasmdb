@@ -482,7 +482,15 @@ type manageMCPServerInput struct {
 	Args        []string          `json:"args,omitempty" jsonschema:"Command arguments (for stdio transport)"`
 	Env         []string          `json:"env,omitempty" jsonschema:"Environment variables KEY=VALUE (for stdio transport)"`
 	Headers     map[string]string `json:"headers,omitempty" jsonschema:"HTTP headers (for streamable-http transport)"`
+	OAuth       *oauthInput       `json:"oauth,omitempty" jsonschema:"OAuth client_credentials config for streamable-http"`
 	Enabled     *bool             `json:"enabled,omitempty" jsonschema:"Whether the server is enabled (default true)"`
+}
+
+type oauthInput struct {
+	ClientID     string   `json:"client_id" jsonschema:"OAuth client ID"`
+	ClientSecret string   `json:"client_secret" jsonschema:"OAuth client secret"`
+	TokenURL     string   `json:"token_url" jsonschema:"OAuth token endpoint URL"`
+	Scopes       []string `json:"scopes,omitempty" jsonschema:"OAuth scopes to request"`
 }
 
 type searchToolsInput struct {
@@ -827,7 +835,7 @@ func (h *dbHandler) manageMCPServer(ctx context.Context, _ *mcp.CallToolRequest,
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
-		srv, err := h.mcpServerStore.Create(ctx, input.Name, input.Description, input.Transport, input.URL, input.Command, input.Args, input.Env, input.Headers, enabled, "")
+		srv, err := h.mcpServerStore.Create(ctx, input.Name, input.Description, input.Transport, input.URL, input.Command, input.Args, input.Env, input.Headers, toOAuthConfig(input.OAuth), enabled, "")
 		if err != nil {
 			return textError("Failed to register MCP server: " + err.Error()), nil, nil
 		}
@@ -845,7 +853,7 @@ func (h *dbHandler) manageMCPServer(ctx context.Context, _ *mcp.CallToolRequest,
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
-		srv, err := h.mcpServerStore.Update(ctx, input.Name, input.Description, input.Transport, input.URL, input.Command, input.Args, input.Env, input.Headers, enabled)
+		srv, err := h.mcpServerStore.Update(ctx, input.Name, input.Description, input.Transport, input.URL, input.Command, input.Args, input.Env, input.Headers, toOAuthConfig(input.OAuth), enabled)
 		if err != nil {
 			return textError("Failed to update MCP server: " + err.Error()), nil, nil
 		}
@@ -996,6 +1004,18 @@ func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolReque
 		payload["requested_model"] = requestedModel
 	}
 	return jsonResult(payload), nil, nil
+}
+
+func toOAuthConfig(o *oauthInput) *mcpservers.OAuthConfig {
+	if o == nil || o.TokenURL == "" {
+		return nil
+	}
+	return &mcpservers.OAuthConfig{
+		ClientID:     o.ClientID,
+		ClientSecret: o.ClientSecret,
+		TokenURL:     o.TokenURL,
+		Scopes:       o.Scopes,
+	}
 }
 
 func mcpxSingleServerGroup(server *mcp.Server) *mcpx.ServerGroup {

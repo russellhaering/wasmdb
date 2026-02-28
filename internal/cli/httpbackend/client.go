@@ -574,7 +574,7 @@ func (c *Client) DeleteMemory(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/memories/"+id, nil, nil)
 }
 
-func (c *Client) CreateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*cli.MCPServerInfo, error) {
+func (c *Client) CreateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, oauth *cli.OAuthConfig, enabled bool) (*cli.MCPServerInfo, error) {
 	body := struct {
 		Name        string            `json:"name"`
 		Description string            `json:"description"`
@@ -584,8 +584,9 @@ func (c *Client) CreateMCPServer(ctx context.Context, name, description, transpo
 		Args        []string          `json:"args,omitempty"`
 		Env         []string          `json:"env,omitempty"`
 		Headers     map[string]string `json:"headers,omitempty"`
+		OAuth       *cli.OAuthConfig  `json:"oauth,omitempty"`
 		Enabled     bool              `json:"enabled"`
-	}{Name: name, Description: description, Transport: transport, URL: url, Command: command, Args: args, Env: env, Headers: headers, Enabled: enabled}
+	}{Name: name, Description: description, Transport: transport, URL: url, Command: command, Args: args, Env: env, Headers: headers, OAuth: oauth, Enabled: enabled}
 
 	var resp cli.MCPServerInfo
 	if err := c.do(ctx, http.MethodPost, "/v1/mcp-servers", body, &resp); err != nil {
@@ -610,7 +611,7 @@ func (c *Client) GetMCPServer(ctx context.Context, name string) (*cli.MCPServerD
 	return &resp, nil
 }
 
-func (c *Client) UpdateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, enabled bool) (*cli.MCPServerInfo, error) {
+func (c *Client) UpdateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, oauth *cli.OAuthConfig, enabled bool) (*cli.MCPServerInfo, error) {
 	body := struct {
 		Description string            `json:"description"`
 		Transport   string            `json:"transport"`
@@ -619,8 +620,9 @@ func (c *Client) UpdateMCPServer(ctx context.Context, name, description, transpo
 		Args        []string          `json:"args,omitempty"`
 		Env         []string          `json:"env,omitempty"`
 		Headers     map[string]string `json:"headers,omitempty"`
+		OAuth       *cli.OAuthConfig  `json:"oauth,omitempty"`
 		Enabled     bool              `json:"enabled"`
-	}{Description: description, Transport: transport, URL: url, Command: command, Args: args, Env: env, Headers: headers, Enabled: enabled}
+	}{Description: description, Transport: transport, URL: url, Command: command, Args: args, Env: env, Headers: headers, OAuth: oauth, Enabled: enabled}
 
 	var resp cli.MCPServerInfo
 	if err := c.do(ctx, http.MethodPut, "/v1/mcp-servers/"+name, body, &resp); err != nil {
