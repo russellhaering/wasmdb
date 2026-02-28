@@ -15,15 +15,18 @@ const chatHTML = `<!DOCTYPE html>
 <title>WasmDB</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100%; }
   body {
     font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", monospace;
     background: #0a0a0a;
     color: #b0b0b0;
+    height: 100dvh;
     height: 100vh;
     display: flex;
     flex-direction: column;
     font-size: 14px;
     line-height: 1.5;
+    overflow: hidden;
   }
   header {
     padding: 6px 16px;
@@ -51,12 +54,25 @@ const chatHTML = `<!DOCTYPE html>
     border-bottom: 1px solid #333;
     margin-left: 8px;
   }
+  #sidebar-toggle {
+    display: none;
+    background: transparent;
+    border: none;
+    color: #606060;
+    font-family: inherit;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 8px 0 0;
+    flex-shrink: 0;
+  }
+  #sidebar-toggle:hover { color: #4ec94e; }
   /* Main layout with sidebar */
   #main-container {
     flex: 1;
     display: none;
     flex-direction: row;
     overflow: hidden;
+    position: relative;
   }
   #sidebar {
     width: 240px;
@@ -65,6 +81,13 @@ const chatHTML = `<!DOCTYPE html>
     flex-direction: column;
     background: #0d0d0d;
     flex-shrink: 0;
+  }
+  #sidebar-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 9;
   }
   #sidebar-header {
     padding: 8px 12px;
@@ -126,6 +149,12 @@ const chatHTML = `<!DOCTYPE html>
   }
   .session-item:hover .session-delete { display: inline; }
   .session-item .session-delete:hover { color: #f07070; }
+  /* A2UI table horizontal scroll */
+  .a2ui-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
   #chat-area {
     flex: 1;
     display: flex;
@@ -369,10 +398,62 @@ const chatHTML = `<!DOCTYPE html>
     display: none;
     text-align: center;
   }
+
+  /* ── Mobile ── */
+  @media (max-width: 640px) {
+    body { font-size: 13px; }
+    header { padding: 6px 12px; font-size: 12px; }
+    header::before { content: '── '; }
+    #sidebar-toggle { display: block; }
+    #sidebar {
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
+      z-index: 10;
+      width: 260px;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+      border-right: 1px solid #333;
+    }
+    #sidebar.open {
+      transform: translateX(0);
+    }
+    #sidebar-overlay.open {
+      display: block;
+    }
+    .session-item {
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    .session-item .session-delete {
+      display: inline;
+      padding: 4px 8px;
+      font-size: 14px;
+    }
+    #chat { padding: 10px 12px; }
+    .msg { font-size: 13px; }
+    #input-area {
+      padding: 8px 10px 12px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+    }
+    #input-area textarea { font-size: 16px; }
+    #input-area button { padding: 6px 14px; font-size: 14px; }
+    #auth-box {
+      width: 90vw;
+      max-width: 340px;
+      padding: 14px;
+    }
+    #auth-screen input { font-size: 16px; }
+    .a2ui-datatable { font-size: 12px; }
+    .a2ui-datatable th,
+    .a2ui-datatable td { padding: 4px 8px 4px 0; }
+    .a2ui-card { max-width: 100%; }
+    .a2ui-row { flex-direction: column; gap: 4px; }
+  }
 </style>
 </head>
 <body>
 <header>
+  <button id="sidebar-toggle" onclick="toggleSidebar()">≡</button>
   <span class="title">wasmdb</span>
   <span class="sep">|</span>
   <span class="label">chat</span>
@@ -391,6 +472,7 @@ const chatHTML = `<!DOCTYPE html>
 </div>
 
 <div id="main-container">
+  <div id="sidebar-overlay" onclick="closeSidebar()"></div>
   <div id="sidebar">
     <div id="sidebar-header">
       <span>sessions</span>
@@ -412,6 +494,16 @@ const chat = document.getElementById('chat');
 const msgInput = document.getElementById('msg');
 const sendBtn = document.getElementById('send');
 let sessionId = null; // Will be set by server or when loading a session
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('open');
+}
+function isMobile() { return window.innerWidth <= 640; }
 
 (async function checkSession() {
   try {
@@ -466,6 +558,7 @@ function renderSessionList(sessions) {
 function startNewSession() {
   sessionId = null;
   chat.innerHTML = '';
+  if (isMobile()) closeSidebar();
   // Deselect all sidebar items.
   document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
   msgInput.focus();
@@ -474,6 +567,7 @@ function startNewSession() {
 async function switchToSession(id) {
   sessionId = id;
   chat.innerHTML = '';
+  if (isMobile()) closeSidebar();
   // Update active state in sidebar.
   document.querySelectorAll('.session-item').forEach(el => {
     el.classList.toggle('active', el.dataset.id === id);
@@ -614,6 +708,8 @@ function renderDataTable(comp) {
   const p = comp.properties || {};
   const cols = p.columns || [];
   const rows = p.rows || [];
+  const wrap = document.createElement('div');
+  wrap.className = 'a2ui-table-wrap';
   const table = document.createElement('table');
   table.className = 'a2ui-datatable';
   if (p.caption) {
@@ -642,7 +738,8 @@ function renderDataTable(comp) {
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
-  return table;
+  wrap.appendChild(table);
+  return wrap;
 }
 
 function renderCard(comp, index) {
