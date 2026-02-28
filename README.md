@@ -182,6 +182,9 @@ All configuration is via environment variables.
 | `WASMDB_L0_COMPACT_THRESHOLD` | `4` | L0 SSTables before compaction triggers |
 | `WASMDB_WAL_FLUSH_INTERVAL` | `1s` | Periodic WAL flush interval |
 | `OPENAI_API_KEY` | *(empty)* | Enables vector embeddings via OpenAI |
+| `ANTHROPIC_API_KEY` | *(empty)* | Enables chat agent (`/chat`, `/v1/chat`) |
+| `WASMDB_CHAT_MODEL` | *(empty)* | Optional main chat model override (defaults to Sonnet 4.5) |
+| `WASMDB_SUBAGENT_MODEL` | *(empty)* | Optional default model for `delegate_subagent` tool |
 
 ## Deployment
 

@@ -82,6 +82,8 @@ func main() {
 		ListenAddr:      cfg.ListenAddr,
 		Registry:        registry,
 		AnthropicAPIKey: cfg.AnthropicAPIKey,
+		ChatModel:       cfg.ChatModel,
+		SubAgentModel:   cfg.SubAgentModel,
 	})
 	if err != nil {
 		slog.Error("failed to create server", "err", err)

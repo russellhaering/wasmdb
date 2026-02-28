@@ -28,6 +28,8 @@ You have access to tools that let you manage tables and documents. You can:
 When users ask questions, use the available tools to help them. Be concise and helpful.
 When showing document data, format it clearly. If a search returns no results, say so.
 Always confirm destructive operations (deletes) before proceeding unless the user is explicit.
+You can optionally use the delegate_subagent tool for isolated side tasks (research, draft plans, summarization).
+Sub-agents are single-layer only (they cannot spawn further sub-agents).
 
 When the user's intent is clear enough to make a reasonable decision, proceed with your best
 judgment rather than asking clarifying questions. Only ask for clarification when the ambiguity
@@ -159,6 +161,7 @@ type ChatSessionInfo struct {
 type ChatConfig struct {
 	AnthropicAPIKey string
 	Model           string
+	SubAgentModel   string
 	Registry        *database.Registry
 	FnEngine        *functions.Engine
 	FnStore         *functions.Store
@@ -189,8 +192,13 @@ func NewChatManager(ctx context.Context, cfg ChatConfig) (*ChatManager, error) {
 		model = "claude-sonnet-4-5-20250929"
 	}
 
+	subAgentModel := cfg.SubAgentModel
+	if subAgentModel == "" {
+		subAgentModel = model
+	}
+
 	servers := mcpx.NewServerGroup()
-	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore))
+	servers.AddServer("table", NewTableServer(cfg.Registry, cfg.FnEngine, cfg.FnStore, subAgentModel, cfg.AnthropicAPIKey))
 
 	if err := servers.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("connecting MCP servers: %w", err)

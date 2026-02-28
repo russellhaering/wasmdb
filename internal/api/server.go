@@ -41,6 +41,8 @@ type ServerConfig struct {
 	ListenAddr      string
 	Registry        *database.Registry
 	AnthropicAPIKey string
+	ChatModel       string
+	SubAgentModel   string
 }
 
 // NewServer creates a new API server.
@@ -62,6 +64,8 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	if cfg.AnthropicAPIKey != "" {
 		cm, err := agent.NewChatManager(ctx, agent.ChatConfig{
 			AnthropicAPIKey: cfg.AnthropicAPIKey,
+			Model:           cfg.ChatModel,
+			SubAgentModel:   cfg.SubAgentModel,
 			Registry:        cfg.Registry,
 			FnEngine:        s.fnEngine,
 			FnStore:         s.fnStore,

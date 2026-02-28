@@ -30,6 +30,8 @@ type Config struct {
 
 	// Chat Agent
 	AnthropicAPIKey string
+	ChatModel       string
+	SubAgentModel   string
 
 	// Auth
 	SeedUserEmail    string
@@ -45,17 +47,18 @@ func Load() *Config {
 		S3Endpoint:       envOrDefault("WASMDB_S3_ENDPOINT", ""),
 		S3Prefix:         envOrDefault("WASMDB_S3_PREFIX", "wasmdb"),
 		CacheDir:         envOrDefault("WASMDB_CACHE_DIR", "/tmp/wasmdb-cache"),
-		CacheMaxSize:     envOrDefaultInt64("WASMDB_CACHE_MAX_SIZE", 1<<30),       // 1GB
-		MemTableMaxSize:  envOrDefaultInt64("WASMDB_MEMTABLE_MAX_SIZE", 64<<20),   // 64MB
+		CacheMaxSize:     envOrDefaultInt64("WASMDB_CACHE_MAX_SIZE", 1<<30),     // 1GB
+		MemTableMaxSize:  envOrDefaultInt64("WASMDB_MEMTABLE_MAX_SIZE", 64<<20), // 64MB
 		L0CompactThresh:  int(envOrDefaultInt64("WASMDB_L0_COMPACT_THRESHOLD", 4)),
 		WALFlushInterval: envOrDefaultDuration("WASMDB_WAL_FLUSH_INTERVAL", 1*time.Second),
 		OpenAIAPIKey:     envOrDefault("OPENAI_API_KEY", ""),
 		AnthropicAPIKey:  envOrDefault("ANTHROPIC_API_KEY", ""),
+		ChatModel:        envOrDefault("WASMDB_CHAT_MODEL", ""),
+		SubAgentModel:    envOrDefault("WASMDB_SUBAGENT_MODEL", ""),
 		SeedUserEmail:    envOrDefault("WASMDB_SEED_USER_EMAIL", ""),
 		SeedUserPassword: envOrDefault("WASMDB_SEED_USER_PASSWORD", ""),
 	}
 }
-
 
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {

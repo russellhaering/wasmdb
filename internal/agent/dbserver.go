@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	autobotagent "github.com/russellhaering/wasmdb/internal/autobot/agent"
+	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
@@ -16,13 +18,13 @@ import (
 )
 
 // NewTableServer creates an MCP server exposing wasmdb table operations as tools.
-func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store) *mcp.Server {
+func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnStore *functions.Store, subAgentModel, anthropicAPIKey string) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "wasmdb-table",
 		Version: "v0.1.0",
 	}, nil)
 
-	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore}
+	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_tables",
@@ -84,13 +86,22 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 		Description: "Create, update, get, list, or delete stored JavaScript functions. Stored functions persist and can be invoked by name.",
 	}, h.manageFunction)
 
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "delegate_subagent",
+		Description: "Delegate a focused sub-task to a one-level-deep sub-agent with optional model override. " +
+			"Use this for research/summarization/planning when isolating context helps. " +
+			"Input: {task, model?, max_turns?}.",
+	}, h.delegateSubagent)
+
 	return srv
 }
 
 type dbHandler struct {
-	registry *database.Registry
-	fnEngine *functions.Engine
-	fnStore  *functions.Store
+	registry        *database.Registry
+	fnEngine        *functions.Engine
+	fnStore         *functions.Store
+	subAgentModel   string
+	anthropicAPIKey string
 }
 
 // --- Tool input types ---
@@ -143,9 +154,9 @@ type searchTextInput struct {
 }
 
 type searchAttributesInput struct {
-	Table   string         `json:"table" jsonschema:"Table name"`
-	Filters []filterInput  `json:"filters" jsonschema:"List of attribute filters"`
-	Limit   int            `json:"limit,omitempty" jsonschema:"Maximum number of results (default 10)"`
+	Table   string        `json:"table" jsonschema:"Table name"`
+	Filters []filterInput `json:"filters" jsonschema:"List of attribute filters"`
+	Limit   int           `json:"limit,omitempty" jsonschema:"Maximum number of results (default 10)"`
 }
 
 type filterInput struct {
@@ -360,6 +371,12 @@ type manageFunctionInput struct {
 	Description string `json:"description,omitempty" jsonschema:"Function description"`
 }
 
+type delegateSubagentInput struct {
+	Task     string `json:"task" jsonschema:"Task for the sub-agent to execute"`
+	Model    string `json:"model,omitempty" jsonschema:"Optional model override for sub-agent (defaults to WASMDB_SUBAGENT_MODEL or parent model)"`
+	MaxTurns int    `json:"max_turns,omitempty" jsonschema:"Optional max tool-use turns for sub-agent (default 8, max 20)"`
+}
+
 func (h *dbHandler) executeCode(ctx context.Context, _ *mcp.CallToolRequest, input executeCodeInput) (*mcp.CallToolResult, any, error) {
 	if h.fnEngine == nil {
 		return textError("JavaScript execution is not available."), nil, nil
@@ -384,8 +401,8 @@ func (h *dbHandler) manageFunction(ctx context.Context, _ *mcp.CallToolRequest, 
 			return textError("Failed to create function: " + err.Error()), nil, nil
 		}
 		return jsonResult(map[string]any{
-			"id":   fn.ID,
-			"name": fn.Name,
+			"id":      fn.ID,
+			"name":    fn.Name,
 			"message": "Function created successfully.",
 		}), nil, nil
 
@@ -398,8 +415,8 @@ func (h *dbHandler) manageFunction(ctx context.Context, _ *mcp.CallToolRequest, 
 			return textError("Failed to update function: " + err.Error()), nil, nil
 		}
 		return jsonResult(map[string]any{
-			"id":   fn.ID,
-			"name": fn.Name,
+			"id":      fn.ID,
+			"name":    fn.Name,
 			"message": "Function updated successfully.",
 		}), nil, nil
 
@@ -463,4 +480,69 @@ func jsonResult(v any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(data)}},
 	}
+}
+
+func (h *dbHandler) delegateSubagent(ctx context.Context, req *mcp.CallToolRequest, input delegateSubagentInput) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(input.Task) == "" {
+		return textError("task is required"), nil, nil
+	}
+
+	// One-level deep only: nesting is blocked by excluding delegate_subagent from sub-agent tools.
+	_ = req
+
+	model := strings.TrimSpace(input.Model)
+	if model == "" {
+		model = strings.TrimSpace(h.subAgentModel)
+	}
+
+	maxTurns := input.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 8
+	}
+	if maxTurns > 20 {
+		maxTurns = 20
+	}
+
+	sg := mcpxSingleServerGroup(NewTableServer(h.registry, h.fnEngine, h.fnStore, h.subAgentModel, h.anthropicAPIKey))
+	defer sg.Close()
+	if err := sg.Connect(ctx); err != nil {
+		return textError("failed to start sub-agent tools: " + err.Error()), nil, nil
+	}
+
+	system := "You are a focused sub-agent. Complete the assigned task and return a concise result. " +
+		"You may use tools as needed. Do not call delegate_subagent (nesting is not allowed)."
+
+	a := autobotagent.NewAgent(autobotagent.Config{
+		APIKey:          h.anthropicAPIKey,
+		Model:           model,
+		SystemPrompt:    system,
+		MaxTokens:       8192,
+		MaxTurns:        maxTurns,
+		DisallowedTools: map[string]bool{"delegate_subagent": true},
+	}, sg)
+
+	s, err := a.NewSession(ctx, input.Task)
+	if err != nil {
+		return textError("failed to create sub-agent session: " + err.Error()), nil, nil
+	}
+
+	res, err := s.Run(ctx)
+	if err != nil {
+		return textError("sub-agent execution failed: " + err.Error()), nil, nil
+	}
+
+	payload := map[string]any{
+		"model":               model,
+		"stop_reason":         res.StopReason,
+		"total_input_tokens":  res.TotalInputTokens,
+		"total_output_tokens": res.TotalOutputTokens,
+		"result":              strings.TrimSpace(res.Text),
+	}
+	return jsonResult(payload), nil, nil
+}
+
+func mcpxSingleServerGroup(server *mcp.Server) *mcpx.ServerGroup {
+	sg := mcpx.NewServerGroup()
+	sg.AddServer("table", server)
+	return sg
 }
