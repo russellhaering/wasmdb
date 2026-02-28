@@ -416,10 +416,10 @@ func (cm *ChatManager) StreamMessage(ctx context.Context, sessionID, userID, mes
 
 		prompt := fmt.Sprintf("Authenticated user_id: %s\n\nUser request:\n%s", userID, message)
 		prefix := ""
-		if catalog := cm.buildSkillsCatalogPrompt(ctx); catalog != "" {
+		if catalog := cm.buildSkillsCatalogPrompt(ctx, message); catalog != "" {
 			prefix += catalog + "\n"
 		}
-		if mem := cm.buildMemoryCatalogPrompt(ctx, userID); mem != "" {
+		if mem := cm.buildMemoryCatalogPrompt(ctx, userID, message); mem != "" {
 			prefix += mem + "\n"
 		}
 		if prefix != "" {
@@ -538,7 +538,7 @@ func (cm *ChatManager) DeleteSession(ctx context.Context, sessionID, userID stri
 
 // buildSkillsCatalogPrompt injects a compact skill catalog (name + description + flags)
 // so the model can discover capabilities without loading full skill definitions.
-func (cm *ChatManager) buildSkillsCatalogPrompt(ctx context.Context) string {
+func (cm *ChatManager) buildSkillsCatalogPrompt(ctx context.Context, userMessage string) string {
 	tbl, err := cm.registry.GetTable(ctx, "_skills")
 	if err != nil {
 		return ""
@@ -549,58 +549,160 @@ func (cm *ChatManager) buildSkillsCatalogPrompt(ctx context.Context) string {
 		return ""
 	}
 
-	const maxChars = 4000
-	var b strings.Builder
-	b.WriteString("Available skills catalog (compact; fetch detail only when needed):\n")
+	type skillCandidate struct {
+		name        string
+		description string
+		function    string
+		manualOnly  bool
+		score       float64
+		cost        int
+	}
 
+	cands := make([]skillCandidate, 0, len(docs))
 	for _, d := range docs {
 		name, _ := d.Attributes["name"].(string)
 		if name == "" {
 			continue
 		}
 		desc, _ := d.Attributes["description"].(string)
-		fn, _ := d.Attributes["function_name"].(string)
-		manualOnly, _ := d.Attributes["disable_model_invocation"].(bool)
 		if desc == "" {
 			desc = "(no description)"
 		}
-		line := fmt.Sprintf("- %s: %s [function=%s, manual_only=%t]\n", name, desc, fn, manualOnly)
-		if b.Len()+len(line) > maxChars {
-			break
+		fn, _ := d.Attributes["function_name"].(string)
+		manualOnly, _ := d.Attributes["disable_model_invocation"].(bool)
+		cost := len(name) + len(desc) + len(fn) + 32
+		score := scoreTextRelevance(userMessage, name+" "+desc+" "+fn)
+		if manualOnly {
+			score += 0.2
 		}
-		b.WriteString(line)
+		cands = append(cands, skillCandidate{name: name, description: desc, function: fn, manualOnly: manualOnly, score: score, cost: cost})
+	}
+	if len(cands) == 0 {
+		return ""
 	}
 
-	if b.Len() == 0 {
+	scores := make([]float64, len(cands))
+	costs := make([]int, len(cands))
+	for i, c := range cands {
+		scores[i] = c.score
+		costs[i] = c.cost
+	}
+	selected := selectByBudgetFromScores(scores, costs, 1800)
+	if len(selected) == 0 {
 		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("Available skills catalog (ranked subset; compact, fetch detail only when needed):\n")
+	for _, idx := range selected {
+		c := cands[idx]
+		b.WriteString(fmt.Sprintf("- %s: %s [function=%s, manual_only=%t]\n", c.name, c.description, c.function, c.manualOnly))
 	}
 	return b.String()
 }
 
 // buildMemoryCatalogPrompt injects compact memory metadata (no full body) for
 // Claude-style progressive disclosure.
-func (cm *ChatManager) buildMemoryCatalogPrompt(ctx context.Context, userID string) string {
+func (cm *ChatManager) buildMemoryCatalogPrompt(ctx context.Context, userID, userMessage string) string {
 	if userID == "" {
 		return ""
 	}
 	store := memory.NewStore(cm.registry)
-	entries, err := store.ListCatalog(ctx, userID, 20)
+	entries, err := store.ListCatalog(ctx, userID, 120)
 	if err != nil || len(entries) == 0 {
 		return ""
 	}
 
-	const maxChars = 3000
-	var b strings.Builder
-	b.WriteString("Memory catalog (compact; fetch detail only when needed):\n")
-	for _, e := range entries {
-		line := fmt.Sprintf("- %s [%s, pinned=%t, tags=%v]: %s\n", e.ID, e.Scope, e.Pinned, e.Tags, e.Summary)
-		if b.Len()+len(line) > maxChars {
-			break
-		}
-		b.WriteString(line)
+	type memCandidate struct {
+		line  string
+		score float64
+		cost  int
 	}
-	if b.Len() == 0 {
+	cands := make([]memCandidate, 0, len(entries))
+	for _, e := range entries {
+		line := fmt.Sprintf("- %s [%s, pinned=%t, tags=%v]: %s", e.ID, e.Scope, e.Pinned, e.Tags, e.Summary)
+		score := scoreTextRelevance(userMessage, e.Title+" "+e.Summary+" "+strings.Join(e.Tags, " "))
+		if e.Pinned {
+			score += 1.0
+		}
+		cands = append(cands, memCandidate{line: line, score: score, cost: len(line)})
+	}
+	scores := make([]float64, len(cands))
+	costs := make([]int, len(cands))
+	for i, c := range cands {
+		scores[i] = c.score
+		costs[i] = c.cost
+	}
+	selected := selectByBudgetFromScores(scores, costs, 1600)
+	if len(selected) == 0 {
 		return ""
 	}
+
+	var b strings.Builder
+	b.WriteString("Memory catalog (ranked subset; compact, fetch detail only when needed):\n")
+	for _, idx := range selected {
+		b.WriteString(cands[idx].line + "\n")
+	}
 	return b.String()
+}
+
+func scoreTextRelevance(query, text string) float64 {
+	qTokens := tokenize(query)
+	if len(qTokens) == 0 {
+		return 0
+	}
+	t := strings.ToLower(text)
+	score := 0.0
+	for _, tok := range qTokens {
+		if strings.Contains(t, tok) {
+			score += 1.0
+		}
+	}
+	return score / float64(len(qTokens))
+}
+
+func tokenize(s string) []string {
+	s = strings.ToLower(s)
+	repl := strings.NewReplacer(",", " ", ".", " ", ":", " ", ";", " ", "(", " ", ")", " ", "[", " ", "]", " ", "{", " ", "}", " ", "\n", " ", "\t", " ")
+	s = repl.Replace(s)
+	parts := strings.Fields(s)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) < 3 {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// selectByBudgetFromScores chooses entries by score-per-cost under a char budget.
+func selectByBudgetFromScores(scores []float64, costs []int, budget int) []int {
+	if budget <= 0 || len(scores) == 0 || len(scores) != len(costs) {
+		return nil
+	}
+	type itemRank struct {
+		idx   int
+		ratio float64
+		cost  int
+	}
+	ranks := make([]itemRank, 0, len(scores))
+	for i := range scores {
+		if costs[i] <= 0 {
+			continue
+		}
+		ranks = append(ranks, itemRank{idx: i, ratio: (scores[i] + 0.05) / float64(costs[i]), cost: costs[i]})
+	}
+	sort.Slice(ranks, func(i, j int) bool { return ranks[i].ratio > ranks[j].ratio })
+
+	used := 0
+	out := make([]int, 0, len(ranks))
+	for _, r := range ranks {
+		if used+r.cost > budget {
+			continue
+		}
+		used += r.cost
+		out = append(out, r.idx)
+	}
+	return out
 }
