@@ -142,40 +142,56 @@ func (e *Engine) Execute(ctx context.Context, code string, params map[string]any
 	//  1. Run the raw code to define functions and execute statements.
 	//  2. If a handler() function was defined, call it with params.
 	//  3. Otherwise, re-evaluate the last expression via __result wrapper.
-	wrapperCode := wrapCodeForResult(code)
-	_, err = execSafe(rt, wrapperCode)
-	if err != nil {
-		result.Error = err.Error()
-		result.Logs = logs
-		result.DurationMS = time.Since(start).Milliseconds()
-		return result
-	}
+	// Check if code defines a handler function.
+	hasHandler := strings.Contains(strings.TrimSpace(code), "function handler")
 
 	var val *qjs.Value
-	handlerVal := jsCtx.Global().GetPropertyStr("handler")
-	if handlerVal != nil && !handlerVal.IsUndefined() && handlerVal.IsFunction() {
-		// Call handler(params).
-		paramsVal := jsCtx.Global().GetPropertyStr("params")
-		callResult, callErr := jsCtx.Invoke(handlerVal, jsCtx.Global(), paramsVal)
-		handlerVal.Free()
-		if callErr != nil {
-			result.Error = callErr.Error()
+
+	if hasHandler {
+		// Run the code to define the handler, then call it.
+		_, err = execSafe(rt, code)
+		if err != nil {
+			result.Error = err.Error()
 			result.Logs = logs
 			result.DurationMS = time.Since(start).Milliseconds()
 			return result
 		}
-		val = callResult
-	} else {
-		if handlerVal != nil {
+
+		handlerVal := jsCtx.Global().GetPropertyStr("handler")
+		if handlerVal != nil && !handlerVal.IsUndefined() && handlerVal.IsFunction() {
+			paramsVal := jsCtx.Global().GetPropertyStr("params")
+			callResult, callErr := jsCtx.Invoke(handlerVal, jsCtx.Global(), paramsVal)
 			handlerVal.Free()
+			if callErr != nil {
+				result.Error = callErr.Error()
+				result.Logs = logs
+				result.DurationMS = time.Since(start).Milliseconds()
+				return result
+			}
+			val = callResult
+		} else {
+			if handlerVal != nil {
+				handlerVal.Free()
+			}
 		}
-		// Get __result from the wrapper.
-		val = jsCtx.Global().GetPropertyStr("__result")
+	} else {
+		// No handler — wrap as IIFE to capture the return value directly.
+		// This avoids the stale-reference problem with __result globals.
+		iifeCode := wrapAsIIFE(code)
+		val, err = execSafe(rt, iifeCode)
+		if err != nil {
+			result.Error = err.Error()
+			result.Logs = logs
+			result.DurationMS = time.Since(start).Milliseconds()
+			return result
+		}
 	}
 
-	// Convert return value.
+	// Convert return value by JSON-serializing inside JS, then parsing in Go.
+	// This avoids QJS value-type quirks where JSONStringify on Go-side
+	// produces corrupted output for objects created via ParseJSON.
 	if val != nil && !val.IsUndefined() && !val.IsNull() {
-		result.Result = jsValueToGo(val)
+		result.Result = extractResultViaJS(jsCtx, val)
 		val.Free()
 	}
 
@@ -184,23 +200,73 @@ func (e *Engine) Execute(ctx context.Context, code string, params map[string]any
 	return result
 }
 
-// wrapCodeForResult wraps user code so the last expression's value
-// is captured in the __result global. This is necessary because QJS
-// eval doesn't reliably return values from host-bound function calls.
-//
-// For code containing a handler() function definition, we skip wrapping
-// and call handler() separately.
-func wrapCodeForResult(code string) string {
-	trimmed := strings.TrimSpace(code)
+// extractResultViaJS serializes a JS value by calling JSON.stringify inside
+// the JS runtime, then parses the JSON string in Go. This is more reliable
+// than using QJS's Go-side JSONStringify which can produce corrupted output
+// for objects created via ParseJSON.
+func extractResultViaJS(jsCtx *qjs.Context, val *qjs.Value) any {
+	// Store the value as a global so we can reference it in eval.
+	jsCtx.Global().SetPropertyStr("__tmp", val)
 
-	// If code defines a handler function, don't wrap — we'll call it explicitly.
-	if strings.Contains(trimmed, "function handler") {
+	// Use JSON.stringify inside JS.
+	jsonVal, err := jsCtx.Eval("__json__.js", qjs.Code("JSON.stringify(__tmp)"))
+	if err != nil || jsonVal == nil || jsonVal.IsUndefined() || jsonVal.IsNull() {
+		// Fallback for primitives that JSON.stringify handles oddly (undefined, etc)
+		return jsValueToGo(val)
+	}
+	defer jsonVal.Free()
+
+	jsonStr := jsonVal.String()
+	if jsonStr == "" || jsonStr == "undefined" {
+		return jsValueToGo(val)
+	}
+
+	var out any
+	if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
+		return jsValueToGo(val)
+	}
+
+	// Promote whole-number floats to int64 for cleaner output.
+	return promoteInts(out)
+}
+
+// promoteInts recursively converts float64 whole numbers to int64.
+func promoteInts(v any) any {
+	switch val := v.(type) {
+	case float64:
+		if val == float64(int64(val)) && val >= -1e15 && val <= 1e15 {
+			return int64(val)
+		}
+		return val
+	case []any:
+		for i, item := range val {
+			val[i] = promoteInts(item)
+		}
+		return val
+	case map[string]any:
+		for k, item := range val {
+			val[k] = promoteInts(item)
+		}
+		return val
+	default:
+		return v
+	}
+}
+
+// wrapAsIIFE wraps user code in an immediately-invoked function expression
+// so the eval return captures the result directly from the QJS runtime.
+// This avoids issues with stale Value references from global property access.
+//
+// It splits the code into preamble statements and a trailing expression,
+// wrapping as: (function(){ <preamble>; return (<lastExpr>); })()
+func wrapAsIIFE(code string) string {
+	trimmed := strings.TrimSpace(code)
+	if trimmed == "" {
 		return code
 	}
 
-	// Split into statements. We use newlines as the primary delimiter.
+	// Split into lines and find last non-empty line.
 	lines := strings.Split(trimmed, "\n")
-	// Find the last non-empty line.
 	lastIdx := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		if strings.TrimSpace(lines[i]) != "" {
@@ -212,48 +278,36 @@ func wrapCodeForResult(code string) string {
 		return code
 	}
 
-	// Take everything before the last line as preamble.
 	preamble := strings.Join(lines[:lastIdx], "\n")
 	lastLine := strings.TrimSpace(lines[lastIdx])
-
-	// Strip trailing semicolon from last line.
 	lastLine = strings.TrimRight(lastLine, ";")
 
-	// Check if the last line looks like a statement (var/let/const/if/for/while/etc).
-	// If so, try splitting on semicolons to find a trailing expression.
+	// If the last line is a statement, try to split on semicolons.
 	if looksLikeStatement(lastLine) {
-		// Try to split on ";" and check if the last non-empty segment is an expression.
 		parts := strings.Split(lastLine, ";")
-		trailingExpr := ""
-		var stmtParts []string
 		for i := len(parts) - 1; i >= 0; i-- {
 			p := strings.TrimSpace(parts[i])
 			if p == "" {
 				continue
 			}
 			if !looksLikeStatement(p) {
-				trailingExpr = p
-				stmtParts = parts[:i]
+				stmts := strings.Join(parts[:i], ";")
+				if preamble != "" {
+					stmts = preamble + "\n" + stmts
+				}
+				return "(function(){" + stmts + "; return (" + p + ");})()" 
 			}
 			break
 		}
-
-		if trailingExpr != "" {
-			stmts := strings.Join(stmtParts, ";")
-			if preamble != "" {
-				return "var __result;\n" + preamble + "\n" + stmts + "; __result = (" + trailingExpr + ");"
-			}
-			return "var __result; " + stmts + "; __result = (" + trailingExpr + ");"
-		}
-
-		// Truly all statements — just run them.
-		return "var __result; " + code
+		// All statements — no return value.
+		return "(function(){" + code + "})()" 
 	}
 
+	// Last line is an expression.
 	if preamble != "" {
-		return "var __result;\n" + preamble + "\n__result = (" + lastLine + ");"
+		return "(function(){" + preamble + "\nreturn (" + lastLine + ");})()" 
 	}
-	return "var __result = (" + lastLine + ");"
+	return "(function(){ return (" + lastLine + ");})()" 
 }
 
 // looksLikeStatement returns true if the line starts with a JS statement keyword.
@@ -292,9 +346,23 @@ func execSafe(rt *qjs.Runtime, code string) (val *qjs.Value, err error) {
 }
 
 // jsValueToGo converts a QJS Value to a Go value suitable for JSON marshaling.
+// QJS type-tag checks (IsArray, IsObject, etc.) can be unreliable for values
+// obtained via GetPropertyStr, so for compound types we use JSONStringify.
 func jsValueToGo(v *qjs.Value) any {
 	if v == nil || v.IsNull() || v.IsUndefined() {
 		return nil
+	}
+
+	// Check reliable primitives first.
+	if v.IsString() {
+		return v.String()
+	}
+	if v.IsNumber() {
+		f := v.Float64()
+		if f == float64(int64(f)) && f >= -1e15 && f <= 1e15 {
+			return int64(f)
+		}
+		return f
 	}
 	if v.IsError() {
 		exc := v.Exception()
@@ -303,30 +371,17 @@ func jsValueToGo(v *qjs.Value) any {
 		}
 		return v.String()
 	}
-	// Check objects/arrays before primitives — QJS arrays and objects
-	// can also satisfy IsBool()/IsNumber() for internal tag reasons.
-	if v.IsArray() || v.IsObject() {
-		jsonStr, err := v.JSONStringify()
-		if err != nil {
-			return v.String()
-		}
+
+	// For anything else (objects, arrays, booleans via QJS internal tags),
+	// use JSONStringify as the most reliable conversion path.
+	if jsonStr, err := v.JSONStringify(); err == nil && jsonStr != "" {
 		var out any
-		if err := json.Unmarshal([]byte(jsonStr), &out); err != nil {
-			return jsonStr
+		if err := json.Unmarshal([]byte(jsonStr), &out); err == nil {
+			return out
 		}
-		return out
 	}
-	if v.IsString() {
-		return v.String()
-	}
-	if v.IsNumber() {
-		f := v.Float64()
-		// Return int if it's a whole number.
-		if f == float64(int64(f)) && f >= -1e15 && f <= 1e15 {
-			return int64(f)
-		}
-		return f
-	}
+
+	// Final fallback.
 	if v.IsBool() {
 		return v.Bool()
 	}
