@@ -183,21 +183,23 @@ All configuration is via environment variables.
 | `WASMDB_WAL_FLUSH_INTERVAL` | `1s` | Periodic WAL flush interval |
 | `OPENAI_API_KEY` | *(empty)* | Enables vector embeddings via OpenAI |
 
-## Kubernetes Deployment
+## Deployment
 
-Manifests are in `deploy/kubernetes/`.
+### Fly.io
 
 ```bash
-kubectl create namespace wasmdb
-
-# Create secrets for AWS credentials
-kubectl -n wasmdb create secret generic wasmdb-secrets \
-  --from-literal=AWS_ACCESS_KEY_ID=... \
-  --from-literal=AWS_SECRET_ACCESS_KEY=...
-
-# Apply manifests
-kubectl -n wasmdb apply -f deploy/kubernetes/
+fly deploy
 ```
+
+Set secrets:
+
+```bash
+fly secrets set WASMDB_SEED_USER_EMAIL=admin@example.com
+fly secrets set WASMDB_SEED_USER_PASSWORD=your-password
+fly secrets set ANTHROPIC_API_KEY=sk-...
+```
+
+The app uses Tigris object storage on Fly for S3-compatible persistence.
 
 ## Testing
 
@@ -223,6 +225,5 @@ internal/
   database/                        Database orchestration, multi-database registry
   api/                             HTTP server, routes, handlers
 deploy/
-  Dockerfile                       Multi-stage build
-  kubernetes/                      Deployment, Service, ConfigMap
+  Dockerfile                       Multi-stage build for Fly.io
 ```

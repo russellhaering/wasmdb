@@ -1,0 +1,17 @@
+[Unit]
+Description=WasmDB
+After=network.target
+
+[Service]
+Type=simple
+User=exedev
+WorkingDirectory=/home/exedev/wasmdb
+ExecStart=/home/exedev/wasmdb/wasmdb
+Restart=on-failure
+RestartSec=3
+Environment=WASMDB_LISTEN_ADDR=:8000
+Environment=WASMDB_CACHE_DIR=/home/exedev/wasmdb/cache
+EnvironmentFile=-/home/exedev/wasmdb/.env
+
+[Install]
+WantedBy=multi-user.target
