@@ -47,3 +47,34 @@ Credentials are stored at `~/.config/wasmdb/credentials.json`.
 - `GET /auth/cli-login` — HTML login page for CLI browser flow
 
 The auth middleware is implemented in `internal/api/server.go`, session management in `internal/auth/`.
+
+## CLI Quick Reference
+
+The CLI binary is at `cmd/wasmdb-cli`. Build with `go run ./cmd/wasmdb-cli ...` or `go build -o wasmdb ./cmd/wasmdb-cli`.
+
+Target the deployed instance with `--url` or `WASMDB_URL`:
+
+```bash
+export WASMDB_URL=https://wasmdb.fly.dev
+```
+
+Login first (credentials saved to `~/.config/wasmdb/credentials.json`):
+
+```bash
+wasmdb login --url https://wasmdb.fly.dev --email EMAIL --password PASS
+```
+
+Then:
+
+```bash
+wasmdb db list                          # list tables
+wasmdb db create mydb                   # create table
+wasmdb doc create mydb --attr key=val   # create document
+wasmdb doc get mydb DOC_ID              # get document
+wasmdb search text mydb "query"         # full-text search
+wasmdb user create --email E --password P  # create user
+wasmdb user list                        # list users
+wasmdb chat                             # interactive chat
+```
+
+Add `--json` to any command for JSON output.
