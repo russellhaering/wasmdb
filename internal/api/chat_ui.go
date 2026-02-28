@@ -1048,10 +1048,23 @@ function handleEvent(type, data, container, toolCalls) {
 
     case 'tool_result': {
       const el = document.getElementById('tool-' + data.id);
+      const incomingTool = typeof data.tool === 'string' ? data.tool : '';
+      if (incomingTool && !toolCalls[data.id]) {
+        toolCalls[data.id] = incomingTool === 'delegate_subagent' ? 'sub-agent' : incomingTool;
+      }
       if (el) {
-        const name = toolCalls[data.id] || 'tool';
-        el.className = 'tool-call' + (data.error ? ' error' : '');
+        const name = toolCalls[data.id] || (incomingTool ? incomingTool : 'tool');
+        const isSubagent = name === 'sub-agent' || incomingTool === 'delegate_subagent';
+        el.className = 'tool-call' + (isSubagent ? ' subagent' : '') + (data.error ? ' error' : '');
         el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> ' + (data.error ? 'error' : 'done');
+      } else if (incomingTool) {
+        // Fallback: if we missed tool_start, still surface completion.
+        const fallback = document.createElement('div');
+        const isSubagent = incomingTool === 'delegate_subagent';
+        fallback.className = 'tool-call' + (isSubagent ? ' subagent' : '') + (data.error ? ' error' : '');
+        const label = isSubagent ? 'sub-agent' : incomingTool;
+        fallback.innerHTML = '<span class="tool-name">' + escapeHtml(label) + '</span> ' + (data.error ? 'error' : 'done');
+        container.appendChild(fallback);
       }
       break;
     }

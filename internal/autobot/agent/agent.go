@@ -80,7 +80,7 @@ type Event struct {
 	// Text is set for TextDelta events.
 	Text string
 
-	// ToolName is set for ToolCallStart events.
+	// ToolName is set for ToolCallStart and ToolResult events.
 	ToolName string
 
 	// ToolID is set for ToolCallStart and ToolResult events.
@@ -493,6 +493,7 @@ func (s *Session) processToolCallsStreaming(ctx context.Context, msg *anthropic.
 		if err != nil {
 			events <- Event{
 				Type:        EventToolResult,
+				ToolName:    tu.Name,
 				ToolID:      tu.ID,
 				ToolResult:  err.Error(),
 				ToolIsError: true,
@@ -519,6 +520,7 @@ func (s *Session) processToolCallsStreaming(ctx context.Context, msg *anthropic.
 
 		events <- Event{
 			Type:        EventToolResult,
+			ToolName:    tu.Name,
 			ToolID:      tu.ID,
 			ToolResult:  resultText,
 			ToolIsError: result.IsError,

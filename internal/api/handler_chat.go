@@ -106,6 +106,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				"id":     evt.ToolID,
 				"result": evt.ToolResult,
 			}
+			if evt.ToolName != "" {
+				d["tool"] = evt.ToolName
+			}
 			if evt.ToolIsError {
 				d["error"] = true
 			}
