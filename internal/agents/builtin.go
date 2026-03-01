@@ -173,12 +173,29 @@ If query_js returns {rows: [...], total: 5, summary: "text"}, then in surface_js
 - DataTable rows: {{rows}} is replaced with the array
 - Text value: "Total: {{total}}" is replaced with "Total: 5"
 
-## Validation Workflow
+## Automatic Validation
 
-After every create or update, ALWAYS run manage_ui action=render to test the page.
-The render result includes a "status" field ("ok" or "error") and an "error" field with details.
-If there's an error, fix the query_js or surface_json and update again.
-Repeat until render returns status=ok.
+Every create and update automatically validates the page by running the full render pipeline
+(query_js execution → template replacement → JSON parse → A2UI structure validation).
+The response includes render_status ("ok" or "error") and render_error with details.
+
+If render_status is "error", you MUST fix the issue and update again. The error_phase tells you
+where it failed:
+- "query_js" — your JavaScript code has an error (syntax, runtime, unsupported feature)
+- "json_parse" — the surface_json became invalid JSON after template replacement
+- "a2ui_validate" — the A2UI structure is malformed (missing root, bad types, cycles, etc.)
+
+You can also use manage_ui action=render to re-test any existing page at any time.
+
+## Error Recovery Workflow
+
+1. After create/update, check render_status in the response.
+2. If error, read the render_error carefully — it tells you exactly what went wrong.
+3. Fix the query_js or surface_json as needed.
+4. Update the page and check render_status again.
+5. Repeat until render_status is "ok".
+6. At the START of each run, also check all existing pages with action=render to catch
+   pages that may have broken due to schema changes or deleted tables.
 
 ## Guidelines
 

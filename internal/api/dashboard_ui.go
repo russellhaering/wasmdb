@@ -399,78 +399,42 @@ async function selectPage(name) {
 
 async function renderPage(name, container) {
   try {
-    const resp = await apiFetch('/v1/ui-configs/' + encodeURIComponent(name) + '/render', { method: 'POST' });
+    var resp = await apiFetch('/v1/ui-configs/' + encodeURIComponent(name) + '/render', { method: 'POST' });
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
+      var err = await resp.json().catch(function() { return {}; });
       throw new Error(err.error || 'render failed');
     }
-    const result = await resp.json();
+    var result = await resp.json();
 
-    let html = '<div class="page-header">';
+    // Check for server-side render errors.
+    if (result.status === 'error') {
+      var errMsg = result.error || 'unknown error';
+      if (result.error_phase) errMsg = '[' + result.error_phase + '] ' + errMsg;
+      container.innerHTML = '<div class="error-banner">' + escapeHtml(errMsg) + '</div>';
+      return;
+    }
+
+    var html = '<div class="page-header">';
     if (result.title) html += '<h2>' + escapeHtml(result.title) + '</h2>';
     if (result.description) html += '<p>' + escapeHtml(result.description) + '</p>';
     html += '</div><div id="a2ui-root"></div>';
 
     container.innerHTML = html;
 
-    // Parse the surface JSON — it may contain template variables like {{data.field}}.
-    let surfaceStr = result.surface_json;
-    if (result.data) {
-      surfaceStr = templateReplace(surfaceStr, result.data);
-    }
-
-    try {
-      const surface = JSON.parse(surfaceStr);
-      renderA2UI(surface, document.getElementById('a2ui-root'));
-    } catch (parseErr) {
-      container.innerHTML += '<div class="error-banner">Invalid A2UI surface JSON: ' + escapeHtml(parseErr.message) + '</div>';
-    }
+    // Surface is already processed server-side (template replacement + validation done).
+    renderA2UI(result.surface, document.getElementById('a2ui-root'));
 
     // Add refresh timestamp.
-    const page = pages.find(p => p.name === name);
+    var page = null;
+    for (var i = 0; i < pages.length; i++) { if (pages[i].name === name) { page = pages[i]; break; } }
     if (page && page.auto_refresh_seconds > 0) {
-      container.innerHTML += '<div class="refresh-info">auto-refresh: ' + page.auto_refresh_seconds + 's │ last: ' + new Date().toLocaleTimeString() + '</div>';
+      container.innerHTML += '<div class="refresh-info">auto-refresh: ' + page.auto_refresh_seconds + 's | last: ' + new Date().toLocaleTimeString() + '</div>';
     }
   } catch (e) {
     container.innerHTML = '<div class="error-banner">Error: ' + escapeHtml(e.message) + '</div>';
   }
 }
 
-// Template replacement: {{key}} or {{key.subkey}} patterns.
-// Handles two cases:
-//   1. "{{key}}" (quoted) where value is object/array -> replace entire "{{key}}" with raw JSON
-//   2. Inline {{key}} in text -> replace with stringified value
-function templateReplace(str, data) {
-  // First pass: handle "{{key}}" where the value is an object/array.
-  // Replace the surrounding quotes too so the JSON stays valid.
-  str = str.replace(/"\{\{([^}]+)\}\}"/g, function(match, path) {
-    var keys = path.trim().split('.');
-    var val = data;
-    for (var i = 0; i < keys.length; i++) {
-      if (val == null) return match;
-      val = val[keys[i]];
-    }
-    if (val == null) return match;
-    if (typeof val === 'object') return JSON.stringify(val);
-    // For primitives in a quoted context, keep the quotes.
-    return '"' + String(val) + '"';
-  });
-  // Second pass: handle remaining {{key}} inline in strings.
-  str = str.replace(/\{\{([^}]+)\}\}/g, function(match, path) {
-    var keys = path.trim().split('.');
-    var val = data;
-    for (var i = 0; i < keys.length; i++) {
-      if (val == null) return match;
-      val = val[keys[i]];
-    }
-    if (val == null) return match;
-    if (typeof val === 'object') return JSON.stringify(val);
-    return String(val);
-  });
-  return str;
-}
-
-// A2UI renderer (same as chat UI).
 function renderA2UI(surface, container) {
   const comps = surface.components || [];
   const idx = {};

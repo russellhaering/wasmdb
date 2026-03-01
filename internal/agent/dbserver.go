@@ -1181,7 +1181,17 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if err != nil {
 			return textError("Failed to create UI config: " + err.Error()), nil, nil
 		}
-		return jsonResult(map[string]any{"created": cfg.Name, "id": cfg.ID, "title": cfg.Title}), nil, nil
+		res := map[string]any{"created": cfg.Name, "id": cfg.ID, "title": cfg.Title}
+		// Auto-validate by rendering.
+		renderResult := uiconfig.Render(ctx, cfg, h.fnEngine)
+		if renderResult.Status == "error" {
+			res["render_status"] = "error"
+			res["render_error"] = renderResult.Error
+			res["render_error_phase"] = renderResult.ErrorPhase
+		} else {
+			res["render_status"] = "ok"
+		}
+		return jsonResult(res), nil, nil
 
 	case "update":
 		if input.Name == "" || input.SurfaceJSON == "" {
@@ -1195,7 +1205,17 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if err != nil {
 			return textError("Failed to update UI config: " + err.Error()), nil, nil
 		}
-		return jsonResult(map[string]any{"updated": cfg.Name, "id": cfg.ID, "title": cfg.Title}), nil, nil
+		res := map[string]any{"updated": cfg.Name, "id": cfg.ID, "title": cfg.Title}
+		// Auto-validate by rendering.
+		renderResult := uiconfig.Render(ctx, cfg, h.fnEngine)
+		if renderResult.Status == "error" {
+			res["render_status"] = "error"
+			res["render_error"] = renderResult.Error
+			res["render_error_phase"] = renderResult.ErrorPhase
+		} else {
+			res["render_status"] = "ok"
+		}
+		return jsonResult(res), nil, nil
 
 	case "get":
 		if input.Name == "" {
@@ -1259,28 +1279,13 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if cfg == nil {
 			return textError("UI config not found: " + input.Name), nil, nil
 		}
-		result := map[string]any{
-			"surface_json": cfg.SurfaceJSON,
-			"title":        cfg.Title,
-			"description":  cfg.Description,
-			"data":         nil,
-			"status":       "ok",
-			"error":        nil,
-		}
-		if cfg.QueryJS != "" && h.fnEngine != nil {
-			execResult := h.fnEngine.Execute(ctx, cfg.QueryJS, nil)
-			if execResult.Error != "" {
-				result["status"] = "error"
-				result["error"] = "query_js execution failed: " + execResult.Error
-				result["data"] = nil
-			} else {
-				result["data"] = execResult.Result
-				if len(execResult.Logs) > 0 {
-					result["logs"] = execResult.Logs
-				}
-			}
-		}
-		return jsonResult(result), nil, nil
+		renderResult := uiconfig.Render(ctx, cfg, h.fnEngine)
+		return jsonResult(map[string]any{
+			"status":      renderResult.Status,
+			"error":       renderResult.Error,
+			"error_phase": renderResult.ErrorPhase,
+			"logs":        renderResult.Logs,
+		}), nil, nil
 
 	default:
 		return textError("Unknown action: " + input.Action + ". Valid actions: create, update, get, list, delete, render"), nil, nil

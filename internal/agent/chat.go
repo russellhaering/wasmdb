@@ -203,8 +203,9 @@ CRITICAL limitations: use var (not let/const), for loops (not .map/.filter), no 
 no toLocaleString/toLocaleDateString, no template literals, no destructuring, no optional chaining.
 Last expression is the return value — end with ({key: val}). No top-level return.
 
-### Validation
-Always use manage_ui action=render after create/update to test for errors and fix them.
+### Automatic Validation
+Every create/update automatically runs the full render pipeline and returns render_status + render_error.
+If render_status is "error", fix and update. Use manage_ui action=render to re-test any page.
 
 ### Built-in UI Builder Agent
 A background agent named "ui-builder" runs daily to auto-create and improve dashboard pages.

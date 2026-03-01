@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/russellhaering/wasmdb/internal/uiconfig"
 )
 
 // handleCreateUIConfig handles POST /v1/ui-configs.
@@ -187,6 +189,7 @@ func (s *Server) handleDeleteUIConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRenderUIConfig handles POST /v1/ui-configs/{name}/render.
+// Runs the full server-side pipeline: query_js → template replace → JSON parse → A2UI validate.
 func (s *Server) handleRenderUIConfig(w http.ResponseWriter, r *http.Request) {
 	if s.uiConfigStore == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ui config store not available"})
@@ -204,21 +207,6 @@ func (s *Server) handleRenderUIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]any{
-		"surface_json": cfg.SurfaceJSON,
-		"title":        cfg.Title,
-		"description":  cfg.Description,
-		"data":         nil,
-	}
-
-	if cfg.QueryJS != "" && s.fnEngine != nil {
-		result := s.fnEngine.Execute(r.Context(), cfg.QueryJS, nil)
-		if result.Error != "" {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_js execution failed: " + result.Error})
-			return
-		}
-		response["data"] = result.Result
-	}
-
-	writeJSON(w, http.StatusOK, response)
+	result := uiconfig.Render(r.Context(), cfg, s.fnEngine)
+	writeJSON(w, http.StatusOK, result)
 }
