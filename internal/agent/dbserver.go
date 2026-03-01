@@ -164,7 +164,7 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "manage_ui",
-		Description: "Create, update, get, list, or delete dashboard UI pages. Each page has an A2UI surface layout and optional query_js for dynamic data. Pages appear at /ui.",
+		Description: "Create, update, get, list, delete, or render dashboard UI pages. Each page has an A2UI surface layout and optional query_js for dynamic data. Pages appear at /ui. Use action=render to test a page and catch errors before publishing.",
 	}, h.manageUI)
 
 	return &TableServerResult{Server: srv, handler: h}
@@ -522,7 +522,7 @@ type manageAgentInput struct {
 }
 
 type manageUIInput struct {
-	Action             string   `json:"action" jsonschema:"Action: create, update, get, list, or delete"`
+	Action             string   `json:"action" jsonschema:"Action: create, update, get, list, delete, or render"`
 	Name               string   `json:"name,omitempty" jsonschema:"UI page name (required for create, update, get, delete)"`
 	Title              string   `json:"title,omitempty" jsonschema:"Display title for the page"`
 	Description        string   `json:"description,omitempty" jsonschema:"Page description"`
@@ -1248,8 +1248,42 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		}
 		return textResult("Deleted UI config: " + input.Name), nil, nil
 
+	case "render":
+		if input.Name == "" {
+			return textError("name is required for render"), nil, nil
+		}
+		cfg, err := h.uiConfigStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to get UI config: " + err.Error()), nil, nil
+		}
+		if cfg == nil {
+			return textError("UI config not found: " + input.Name), nil, nil
+		}
+		result := map[string]any{
+			"surface_json": cfg.SurfaceJSON,
+			"title":        cfg.Title,
+			"description":  cfg.Description,
+			"data":         nil,
+			"status":       "ok",
+			"error":        nil,
+		}
+		if cfg.QueryJS != "" && h.fnEngine != nil {
+			execResult := h.fnEngine.Execute(ctx, cfg.QueryJS, nil)
+			if execResult.Error != "" {
+				result["status"] = "error"
+				result["error"] = "query_js execution failed: " + execResult.Error
+				result["data"] = nil
+			} else {
+				result["data"] = execResult.Result
+				if len(execResult.Logs) > 0 {
+					result["logs"] = execResult.Logs
+				}
+			}
+		}
+		return jsonResult(result), nil, nil
+
 	default:
-		return textError("Unknown action: " + input.Action + ". Valid actions: create, update, get, list, delete"), nil, nil
+		return textError("Unknown action: " + input.Action + ". Valid actions: create, update, get, list, delete, render"), nil, nil
 	}
 }
 

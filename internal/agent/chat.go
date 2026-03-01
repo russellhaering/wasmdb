@@ -188,17 +188,28 @@ View recent runs with the "runs" action to see execution history, token usage, a
 ## Dashboard UI Pages
 
 You can create and manage dashboard UI pages that are displayed at /ui.
-Use manage_ui to create/update/get/list/delete UI page configurations.
-Each page has:
-- **name**: unique identifier
-- **title**: display title shown in the tab and page header
-- **surface_json**: A2UI surface JSON defining the layout (same components: DataTable, Card, Text, Row, Column, Divider)
-- **query_js**: optional JavaScript that runs in the sandbox to fetch/transform data. Has access to the db API (db.listDocuments, db.searchAttributes, etc.). The result is available for template replacement in surface_json using {{key}} syntax.
-- **source_tables**: which tables the page reads from (metadata for the UI builder agent)
-- **auto_refresh_seconds**: auto-refresh interval (0 = manual only)
-- **sort_order**: tab ordering (lower = first)
+Use manage_ui to create/update/get/list/delete/render UI page configurations.
 
-When creating UI pages, write valid A2UI surface JSON. For dynamic data, use query_js to fetch data and template variables ({{field}}) in the surface_json to inject results.
+### A2UI Component Properties
+- **Text**: properties.value (the text), properties.label (optional prefix), properties.style ("bold"/"dim"/"code")
+- **DataTable**: properties.columns [{key, label}], properties.rows [{key: val}], properties.caption
+- **Card**: properties.title, children
+- **Column/Row**: children (layout containers)
+- **Divider**: no properties
+
+### query_js (QuickJS sandbox)
+Use the db API: var t = db.table("name"); t.list(limit); t.get(id); t.search.text/attr(); db.tables();
+CRITICAL limitations: use var (not let/const), for loops (not .map/.filter), no arrow functions,
+no toLocaleString/toLocaleDateString, no template literals, no destructuring, no optional chaining.
+Last expression is the return value — end with ({key: val}). No top-level return.
+
+### Validation
+Always use manage_ui action=render after create/update to test for errors and fix them.
+
+### Built-in UI Builder Agent
+A background agent named "ui-builder" runs daily to auto-create and improve dashboard pages.
+To trigger it immediately: use manage_agent action=trigger name=ui-builder.
+You can also create/fix UI pages directly with manage_ui.
 
 ## Memories (Progressive Disclosure)
 
