@@ -10,23 +10,27 @@ import (
 
 // RunConfig holds configuration for a CLI invocation.
 type RunConfig struct {
-	Backend   Backend
-	ServerURL string
-	Stdout    io.Writer
-	Stderr    io.Writer
-	Stdin     io.Reader
+	Backend     Backend
+	ServerURL   string
+	Token       string
+	Stdout      io.Writer
+	Stderr      io.Writer
+	Stdin       io.Reader
+	JSONDefault bool
 }
 
 // cmdContext is the context passed to each command handler.
 type cmdContext struct {
 	context.Context
-	backend Backend
-	stdout  io.Writer
-	stderr  io.Writer
-	stdin   io.Reader
-	args    []string // positional args after noun+verb
-	flags   map[string][]string
-	json    bool
+	backend   Backend
+	serverURL string
+	token     string
+	stdout    io.Writer
+	stderr    io.Writer
+	stdin     io.Reader
+	args      []string // positional args after noun+verb
+	flags     map[string][]string
+	json      bool
 }
 
 // flag returns the first value for a flag, or empty string.
@@ -113,6 +117,9 @@ func Run(ctx context.Context, argv []string, cfg RunConfig) error {
 	}
 
 	_, jsonMode := flags["json"]
+	if !jsonMode && cfg.JSONDefault {
+		jsonMode = true
+	}
 
 	// Inject server URL as a flag so commands can access it.
 	if cfg.ServerURL != "" {
@@ -122,27 +129,49 @@ func Run(ctx context.Context, argv []string, cfg RunConfig) error {
 	}
 
 	cctx := &cmdContext{
-		Context: ctx,
-		backend: cfg.Backend,
-		stdout:  cfg.Stdout,
-		stderr:  cfg.Stderr,
-		stdin:   cfg.Stdin,
-		args:    args,
-		flags:   flags,
-		json:    jsonMode,
+		Context:   ctx,
+		backend:   cfg.Backend,
+		serverURL: cfg.ServerURL,
+		token:     cfg.Token,
+		stdout:    cfg.Stdout,
+		stderr:    cfg.Stderr,
+		stdin:     cfg.Stdin,
+		args:      args,
+		flags:     flags,
+		json:      jsonMode,
 	}
 
 	return cmd.run(cctx)
 }
 
 // parseFlags splits args into positional args and flags.
-// Flags are --key value or --key=value. Boolean flags like --json have no value.
+// Flags are --key value, --key=value, or -X value. Boolean flags like --json have no value.
 func parseFlags(args []string) (positional []string, flags map[string][]string, err error) {
 	flags = make(map[string][]string)
 	boolFlags := map[string]bool{"json": true, "manual-only": true, "pinned": true}
+	// Short flags that take a value: -X, -F, -H, -i.
+	shortValueFlags := map[byte]string{
+		'X': "X",
+		'F': "F",
+		'H': "H",
+		'i': "i",
+	}
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+
+		// Handle short flags like -X, -F, -H, -i.
+		if len(arg) == 2 && arg[0] == '-' && arg[1] != '-' {
+			if name, ok := shortValueFlags[arg[1]]; ok {
+				if i+1 >= len(args) {
+					return nil, nil, fmt.Errorf("flag -%c requires a value", arg[1])
+				}
+				i++
+				flags[name] = append(flags[name], args[i])
+				continue
+			}
+		}
+
 		if !strings.HasPrefix(arg, "--") {
 			positional = append(positional, arg)
 			continue

@@ -48,6 +48,29 @@ Credentials are stored at `~/.config/wasmdb/credentials.json`.
 
 The auth middleware is implemented in `internal/api/server.go`, session management in `internal/auth/`.
 
+## Configuration File
+
+The CLI reads `~/.config/wasmdb/config.json` for persistent settings:
+
+```json
+{
+  "url": "https://wasmdb.fly.dev",
+  "default_format": "json"
+}
+```
+
+Resolution order for URL: `--url` flag > `WASMDB_URL` env > config file > `http://localhost:8080`.
+
+Manage via CLI:
+
+```bash
+wasmdb config set url https://wasmdb.fly.dev
+wasmdb config set default_format json
+wasmdb config get url
+wasmdb config list
+wasmdb config path
+```
+
 ## CLI Quick Reference
 
 The CLI binary is at `cmd/wasmdb-cli`. Build with `go run ./cmd/wasmdb-cli ...` or `go build -o wasmdb ./cmd/wasmdb-cli`.
@@ -99,6 +122,12 @@ wasmdb agent update myagent --prompt "..." --schedule 30m  # update agent
 wasmdb agent delete myagent              # delete agent
 wasmdb agent trigger myagent             # trigger agent run immediately
 wasmdb agent runs myagent                # list recent agent runs
+wasmdb api /v1/tables                    # GET request to API
+wasmdb api /v1/tables -X POST -F name=test  # POST with JSON body
+wasmdb api /v1/exec --input script.json  # POST with file body
+wasmdb api /healthz -H 'X-Custom: val'   # custom headers
+wasmdb config set url https://host       # set default URL
+wasmdb config list                       # show all config
 wasmdb chat                              # interactive chat
 ```
 

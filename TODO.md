@@ -47,17 +47,9 @@ Chat sessions are now persisted to the `_chat_sessions` system table. Message hi
 ## Headless Device-Code Login ✅
 `wasmdb login --url URL --headless true` starts a device-code flow: server creates a pending code, CLI prints a login URL and polls every 2s, user completes login in browser, CLI receives token. Enables CLI auth from headless/remote environments where localhost callbacks don't work.
 
-## CLI `api` Subcommand
-Add a low-level `wasmdb api` command inspired by `gh api` for direct access to arbitrary endpoints.
+## CLI `api` Subcommand ✅
+Low-level `wasmdb api` command inspired by `gh api` for direct access to arbitrary endpoints.
 
-Proposed scope:
-- `wasmdb api <path>` defaults to `GET`
-- `--method/-X` for HTTP verb override
-- `--field/-F key=value` (repeatable) for JSON body construction
-- `--raw-field key=value` for string-only fields
-- `--input/-i <file>` for raw request body
-- `--header/-H "Key: Value"` for custom headers
-- `--paginate` helper for list endpoints
-- `--jq` or `--template` style output filtering (optional follow-up)
+**Done:** `wasmdb api <path>` defaults to `GET` (or `POST` when body flags are present). `--method/-X` for HTTP verb override. `--field/-F key=value` (repeatable) for JSON body construction with auto-type detection (numbers, bools, arrays, objects). `--raw-field key=value` for string-only fields. `--input/-i <file>` for raw request body (`-` for stdin). `--header/-H "Key: Value"` for custom headers. Uses existing auth/token resolution. Pretty-prints JSON responses. Shows HTTP status on errors.
 
-Use existing auth/token resolution so this works for unsupported/new server endpoints without waiting for first-class CLI wrappers.
+**Remaining:** `--paginate` helper for list endpoints. `--jq` or `--template` style output filtering.

@@ -21,6 +21,12 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
+	// Load config file (best-effort; missing file is fine).
+	cfg, _ := cli.LoadConfig()
+	if cfg == nil {
+		cfg = &cli.Config{}
+	}
+
 	// Extract global flags (--url, --token) before passing to CLI engine.
 	var url, token string
 	var remaining []string
@@ -44,8 +50,12 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 
+	// URL resolution: --url flag > WASMDB_URL env > config file > default.
 	if url == "" {
 		url = os.Getenv("WASMDB_URL")
+	}
+	if url == "" {
+		url = cfg.URL
 	}
 	if url == "" {
 		url = "http://localhost:8080"
@@ -63,11 +73,16 @@ func run(ctx context.Context, args []string) error {
 
 	backend := httpbackend.New(url, token)
 
+	// Check if config specifies default JSON output.
+	jsonDefault := cfg.DefaultFormat == "json"
+
 	return cli.Run(ctx, remaining, cli.RunConfig{
-		Backend:   backend,
-		ServerURL: url,
-		Stdout:    os.Stdout,
-		Stderr:    os.Stderr,
-		Stdin:     os.Stdin,
+		Backend:     backend,
+		ServerURL:   url,
+		Token:       token,
+		Stdout:      os.Stdout,
+		Stderr:      os.Stderr,
+		Stdin:       os.Stdin,
+		JSONDefault: jsonDefault,
 	})
 }
