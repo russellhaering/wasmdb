@@ -242,13 +242,22 @@ func (s *Store) Update(ctx context.Context, name, description, prompt, schedule,
 }
 
 // Delete removes an agent by name.
-func (s *Store) Delete(ctx context.Context, name string) error {
-	existing, err := s.Get(ctx, name)
-	if err != nil {
-		return err
-	}
-	if existing == nil {
-		return fmt.Errorf("agent %q not found", name)
+func (s *Store) Delete(ctx context.Context, name string, optionalID ...string) error {
+	var docID string
+
+	if len(optionalID) > 0 && optionalID[0] != "" {
+		// Delete by explicit ID (used for duplicate cleanup).
+		docID = optionalID[0]
+	} else {
+		// Look up by name.
+		existing, err := s.Get(ctx, name)
+		if err != nil {
+			return err
+		}
+		if existing == nil {
+			return fmt.Errorf("agent %q not found", name)
+		}
+		docID = existing.ID
 	}
 
 	tbl, err := s.registry.GetTable(ctx, agentsTable)
@@ -256,7 +265,7 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 		return fmt.Errorf("get agents table: %w", err)
 	}
 
-	return tbl.DeleteDocument(ctx, existing.ID)
+	return tbl.DeleteDocument(ctx, docID)
 }
 
 // RecordRun records a completed agent run.

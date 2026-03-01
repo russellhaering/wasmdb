@@ -35,14 +35,30 @@ func BuiltinAgents() []BuiltinAgent {
 
 // EnsureBuiltinAgents creates built-in agents if they don't already exist.
 // If the agent exists, it only updates the prompt (preserving user changes to schedule/enabled).
+//
+// This uses List() (backed by LSM scan) rather than Get() (backed by attribute index)
+// because the attribute index is rebuilt asynchronously on startup and may not be
+// ready yet when this function is called.
 func EnsureBuiltinAgents(ctx context.Context, store *Store) {
+	// Use List to avoid depending on the attribute index, which may not be
+	// populated yet during early startup.
+	allAgents, err := store.List(ctx)
+	if err != nil {
+		slog.Error("failed to list agents for builtin check", "err", err)
+		return
+	}
+
+	// Build a lookup map by name. If there are duplicates, track them for cleanup.
+	agentsByName := make(map[string][]*Agent)
+	for _, a := range allAgents {
+		agentsByName[a.Name] = append(agentsByName[a.Name], a)
+	}
+
 	for _, ba := range BuiltinAgents() {
-		existing, err := store.Get(ctx, ba.Name)
-		if err != nil {
-			slog.Error("failed to check built-in agent", "agent", ba.Name, "err", err)
-			continue
-		}
-		if existing == nil {
+		existingList := agentsByName[ba.Name]
+
+		if len(existingList) == 0 {
+			// Agent doesn't exist yet — create it.
 			_, err := store.Create(ctx, ba.Name, ba.Description, ba.Prompt, ba.Schedule, ba.TriggerType, ba.Enabled, ba.MaxTurns, "system")
 			if err != nil {
 				slog.Error("failed to create built-in agent", "agent", ba.Name, "err", err)
@@ -50,6 +66,16 @@ func EnsureBuiltinAgents(ctx context.Context, store *Store) {
 				slog.Info("created built-in agent", "agent", ba.Name)
 			}
 		} else {
+			// Use the first one as canonical, delete any duplicates.
+			existing := existingList[0]
+			for _, dup := range existingList[1:] {
+				if err := store.Delete(ctx, dup.Name, dup.ID); err != nil {
+					slog.Error("failed to delete duplicate built-in agent", "agent", ba.Name, "id", dup.ID, "err", err)
+				} else {
+					slog.Info("deleted duplicate built-in agent", "agent", ba.Name, "id", dup.ID)
+				}
+			}
+
 			// Update the prompt to the latest version but preserve user-configured settings.
 			if existing.Prompt != ba.Prompt || existing.Description != ba.Description {
 				_, err := store.Update(ctx, ba.Name, ba.Description, ba.Prompt, existing.Schedule, existing.TriggerType, existing.Enabled, existing.MaxTurns)
