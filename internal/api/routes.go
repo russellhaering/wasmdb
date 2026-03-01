@@ -83,6 +83,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/mcp-servers/{name}", s.handleUpdateMCPServer)
 	mux.HandleFunc("DELETE /v1/mcp-servers/{name}", s.handleDeleteMCPServer)
 
+	// Agents.
+	mux.HandleFunc("POST /v1/agents", s.handleCreateAgent)
+	mux.HandleFunc("GET /v1/agents", s.handleListAgents)
+	mux.HandleFunc("GET /v1/agents/{name}", s.handleGetAgent)
+	mux.HandleFunc("PUT /v1/agents/{name}", s.handleUpdateAgent)
+	mux.HandleFunc("DELETE /v1/agents/{name}", s.handleDeleteAgent)
+	mux.HandleFunc("POST /v1/agents/{name}/trigger", s.handleTriggerAgent)
+	mux.HandleFunc("GET /v1/agents/{name}/runs", s.handleListAgentRuns)
+
 	// Health.
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)

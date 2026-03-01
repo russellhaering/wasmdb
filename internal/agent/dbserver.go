@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	autobotagent "github.com/russellhaering/wasmdb/internal/autobot/agent"
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
+	"github.com/russellhaering/wasmdb/internal/agents"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
@@ -39,12 +40,13 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 	if len(mcpServerStore) > 0 {
 		mcpStore = mcpServerStore[0]
 	}
+	agentStore := agents.NewStore(registry)
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "wasmdb-table",
 		Version: "v0.1.0",
 	}, nil)
 
-	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, memoryStore: memoryStore, mcpServerStore: mcpStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
+	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, memoryStore: memoryStore, mcpServerStore: mcpStore, agentStore: agentStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_tables",
@@ -153,6 +155,11 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 			"Input: {task, model?, max_turns?}. Model may be an alias like sonnet/opus/haiku.",
 	}, h.delegateSubagent)
 
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "manage_agent",
+		Description: "Create, update, get, list, delete, or list runs for background agents. Agents run automatically on a timer schedule.",
+	}, h.manageAgent)
+
 	return &TableServerResult{Server: srv, handler: h}
 }
 
@@ -163,6 +170,7 @@ type dbHandler struct {
 	skillStore      *skills.Store
 	memoryStore     *memory.Store
 	mcpServerStore  *mcpservers.Store
+	agentStore      *agents.Store
 	subAgentModel   string
 	anthropicAPIKey string
 	// serverGroup is set by the chat manager so tools can query it.
@@ -491,6 +499,18 @@ type oauthInput struct {
 	ClientSecret string   `json:"client_secret" jsonschema:"OAuth client secret"`
 	TokenURL     string   `json:"token_url" jsonschema:"OAuth token endpoint URL"`
 	Scopes       []string `json:"scopes,omitempty" jsonschema:"OAuth scopes to request"`
+}
+
+type manageAgentInput struct {
+	Action      string `json:"action" jsonschema:"Action: create, update, get, list, delete, or runs"`
+	Name        string `json:"name,omitempty" jsonschema:"Agent name (required for create, update, get, delete, runs)"`
+	Description string `json:"description,omitempty" jsonschema:"Agent description"`
+	Prompt      string `json:"prompt,omitempty" jsonschema:"Agent prompt/instruction (required for create, update)"`
+	Schedule    string `json:"schedule,omitempty" jsonschema:"Timer interval as Go duration e.g. 5m, 1h, 24h (required for create, update)"`
+	TriggerType string `json:"trigger_type,omitempty" jsonschema:"Trigger type: timer (default timer)"`
+	Enabled     *bool  `json:"enabled,omitempty" jsonschema:"Whether the agent is enabled (default true)"`
+	MaxTurns    int    `json:"max_turns,omitempty" jsonschema:"Max agent turns (0 = default 20)"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"Max results for runs action (default 20)"`
 }
 
 type searchToolsInput struct {
@@ -897,6 +917,110 @@ func (h *dbHandler) manageMCPServer(ctx context.Context, _ *mcp.CallToolRequest,
 
 	default:
 		return textError("Unknown action: " + input.Action + ". Use register, update, get, list, or delete."), nil, nil
+	}
+}
+
+func (h *dbHandler) manageAgent(ctx context.Context, _ *mcp.CallToolRequest, input manageAgentInput) (*mcp.CallToolResult, any, error) {
+	if h.agentStore == nil {
+		return textError("Agent management is not available."), nil, nil
+	}
+
+	switch input.Action {
+	case "create":
+		if input.Name == "" || input.Prompt == "" || input.Schedule == "" {
+			return textError("name, prompt, and schedule are required for create"), nil, nil
+		}
+		triggerType := input.TriggerType
+		if triggerType == "" {
+			triggerType = "timer"
+		}
+		enabled := true
+		if input.Enabled != nil {
+			enabled = *input.Enabled
+		}
+		ag, err := h.agentStore.Create(ctx, input.Name, input.Description, input.Prompt, input.Schedule, triggerType, enabled, input.MaxTurns, "")
+		if err != nil {
+			return textError("Failed to create agent: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":      ag.ID,
+			"name":    ag.Name,
+			"message": "Background agent created. It will start running on its schedule.",
+		}), nil, nil
+
+	case "update":
+		if input.Name == "" || input.Prompt == "" || input.Schedule == "" {
+			return textError("name, prompt, and schedule are required for update"), nil, nil
+		}
+		triggerType := input.TriggerType
+		if triggerType == "" {
+			triggerType = "timer"
+		}
+		enabled := true
+		if input.Enabled != nil {
+			enabled = *input.Enabled
+		}
+		ag, err := h.agentStore.Update(ctx, input.Name, input.Description, input.Prompt, input.Schedule, triggerType, enabled, input.MaxTurns)
+		if err != nil {
+			return textError("Failed to update agent: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"id":      ag.ID,
+			"name":    ag.Name,
+			"message": "Background agent updated. Schedule changes take effect on the next cycle.",
+		}), nil, nil
+
+	case "get":
+		if input.Name == "" {
+			return textError("name is required for get"), nil, nil
+		}
+		ag, err := h.agentStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to get agent: " + err.Error()), nil, nil
+		}
+		if ag == nil {
+			return textError("Agent not found: " + input.Name), nil, nil
+		}
+		return jsonResult(ag), nil, nil
+
+	case "list":
+		agentsList, err := h.agentStore.List(ctx)
+		if err != nil {
+			return textError("Failed to list agents: " + err.Error()), nil, nil
+		}
+		if len(agentsList) == 0 {
+			return textResult("No background agents configured."), nil, nil
+		}
+		return jsonResult(agentsList), nil, nil
+
+	case "delete":
+		if input.Name == "" {
+			return textError("name is required for delete"), nil, nil
+		}
+		if err := h.agentStore.Delete(ctx, input.Name); err != nil {
+			return textError("Failed to delete agent: " + err.Error()), nil, nil
+		}
+		return textResult(fmt.Sprintf("Agent %q deleted successfully.", input.Name)), nil, nil
+
+	case "runs":
+		if input.Name == "" {
+			return textError("name is required for runs"), nil, nil
+		}
+		limit := input.Limit
+		if limit <= 0 {
+			limit = 20
+		}
+		runs, err := h.agentStore.ListRuns(ctx, input.Name, limit)
+		if err != nil {
+			return textError("Failed to list agent runs: " + err.Error()), nil, nil
+		}
+		if len(runs) == 0 {
+			return textResult("No runs found for agent " + input.Name), nil, nil
+		}
+		return jsonResult(runs), nil, nil
+
+	default:
+		return textError("Unknown action: " + input.Action + ". Use create, update, get, list, delete, or runs."), nil, nil
 	}
 }
 

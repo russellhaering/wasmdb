@@ -87,6 +87,13 @@ wasmdb mcp list                          # list registered MCP servers
 wasmdb mcp get srv                       # get MCP server details
 wasmdb mcp update srv --transport stdio --command cmd  # update MCP server
 wasmdb mcp delete srv                    # delete MCP server
+wasmdb agent create myagent --prompt "..." --schedule 1h  # create background agent
+wasmdb agent list                        # list background agents
+wasmdb agent get myagent                 # get agent details
+wasmdb agent update myagent --prompt "..." --schedule 30m  # update agent
+wasmdb agent delete myagent              # delete agent
+wasmdb agent trigger myagent             # trigger agent run immediately
+wasmdb agent runs myagent                # list recent agent runs
 wasmdb chat                              # interactive chat
 ```
 

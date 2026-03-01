@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/russellhaering/wasmdb/internal/agent"
+	"github.com/russellhaering/wasmdb/internal/agents"
 	"github.com/russellhaering/wasmdb/internal/api/graphqlapi"
 	"github.com/russellhaering/wasmdb/internal/auth"
 	"github.com/russellhaering/wasmdb/internal/database"
@@ -37,9 +38,11 @@ type Server struct {
 	sessions    *auth.SessionManager
 	fnEngine    *functions.Engine
 	fnStore     *functions.Store
-	skillStore     *skills.Store
-	memoryStore    *memory.Store
-	mcpServerStore *mcpservers.Store
+	skillStore      *skills.Store
+	memoryStore     *memory.Store
+	mcpServerStore  *mcpservers.Store
+	agentStore      *agents.Store
+	agentScheduler  *agents.Scheduler
 }
 
 // ServerConfig configures the API server.
@@ -56,6 +59,8 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	fnEngine := functions.NewEngine(cfg.Registry, 0, 0)
 	fnStore := functions.NewStore(cfg.Registry)
 
+	agentStore := agents.NewStore(cfg.Registry)
+
 	s := &Server{
 		registry:       cfg.Registry,
 		sessions:       auth.NewSessionManager(cfg.Registry),
@@ -64,6 +69,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		skillStore:     skills.NewStore(cfg.Registry, fnStore, fnEngine),
 		memoryStore:    memory.NewStore(cfg.Registry),
 		mcpServerStore: mcpservers.NewStore(cfg.Registry),
+		agentStore:     agentStore,
 	}
 
 	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)
@@ -111,6 +117,16 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	}
 
 	return s, nil
+}
+
+// AgentStore returns the agent store for external use (e.g., scheduler setup).
+func (s *Server) AgentStore() *agents.Store {
+	return s.agentStore
+}
+
+// SetAgentScheduler sets the agent scheduler on the server for trigger endpoints.
+func (s *Server) SetAgentScheduler(scheduler *agents.Scheduler) {
+	s.agentScheduler = scheduler
 }
 
 // Start begins listening for requests.

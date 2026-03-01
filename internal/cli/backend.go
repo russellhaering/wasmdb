@@ -153,6 +153,14 @@ type Backend interface {
 	UpdateMCPServer(ctx context.Context, name, description, transport, url, command string, args, env []string, headers map[string]string, oauth *OAuthConfig, enabled bool) (*MCPServerInfo, error)
 	DeleteMCPServer(ctx context.Context, name string) error
 
+	CreateAgent(ctx context.Context, name, description, prompt, schedule, triggerType string, enabled bool, maxTurns int) (*AgentInfo, error)
+	ListAgents(ctx context.Context) ([]AgentSummary, error)
+	GetAgent(ctx context.Context, name string) (*AgentDetail, error)
+	UpdateAgent(ctx context.Context, name, description, prompt, schedule, triggerType string, enabled bool, maxTurns int) (*AgentInfo, error)
+	DeleteAgent(ctx context.Context, name string) error
+	TriggerAgent(ctx context.Context, name string) (*AgentRunInfo, error)
+	ListAgentRuns(ctx context.Context, name string, limit int) ([]AgentRunInfo, error)
+
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)
 
@@ -232,6 +240,58 @@ type OAuthConfig struct {
 	ClientSecret string   `json:"client_secret"`
 	TokenURL     string   `json:"token_url"`
 	Scopes       []string `json:"scopes,omitempty"`
+}
+
+// AgentInfo holds basic agent metadata returned after create/update.
+type AgentInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	TriggerType string `json:"trigger_type"`
+	Schedule    string `json:"schedule"`
+	Enabled     bool   `json:"enabled"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+// AgentSummary holds agent metadata for list display.
+type AgentSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Schedule    string `json:"schedule"`
+	TriggerType string `json:"trigger_type"`
+	Enabled     bool   `json:"enabled"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// AgentDetail holds full agent details.
+type AgentDetail struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Prompt      string `json:"prompt"`
+	Schedule    string `json:"schedule"`
+	TriggerType string `json:"trigger_type"`
+	Enabled     bool   `json:"enabled"`
+	MaxTurns    int    `json:"max_turns,omitempty"`
+	CreatedBy   string `json:"created_by,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// AgentRunInfo holds agent run details.
+type AgentRunInfo struct {
+	ID           string `json:"id"`
+	AgentID      string `json:"agent_id"`
+	AgentName    string `json:"agent_name"`
+	Status       string `json:"status"`
+	Output       string `json:"output,omitempty"`
+	Error        string `json:"error,omitempty"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	DurationMS   int64  `json:"duration_ms"`
+	StartedAt    string `json:"started_at"`
+	CompletedAt  string `json:"completed_at,omitempty"`
 }
 
 type ChatEvent struct {

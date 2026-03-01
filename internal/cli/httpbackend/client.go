@@ -634,3 +634,75 @@ func (c *Client) UpdateMCPServer(ctx context.Context, name, description, transpo
 func (c *Client) DeleteMCPServer(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/mcp-servers/"+name, nil, nil)
 }
+
+func (c *Client) CreateAgent(ctx context.Context, name, description, prompt, schedule, triggerType string, enabled bool, maxTurns int) (*cli.AgentInfo, error) {
+	body := struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Prompt      string `json:"prompt"`
+		Schedule    string `json:"schedule"`
+		TriggerType string `json:"trigger_type"`
+		Enabled     bool   `json:"enabled"`
+		MaxTurns    int    `json:"max_turns,omitempty"`
+	}{Name: name, Description: description, Prompt: prompt, Schedule: schedule, TriggerType: triggerType, Enabled: enabled, MaxTurns: maxTurns}
+
+	var resp cli.AgentInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/agents", body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListAgents(ctx context.Context) ([]cli.AgentSummary, error) {
+	var resp []cli.AgentSummary
+	if err := c.do(ctx, http.MethodGet, "/v1/agents", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) GetAgent(ctx context.Context, name string) (*cli.AgentDetail, error) {
+	var resp cli.AgentDetail
+	if err := c.do(ctx, http.MethodGet, "/v1/agents/"+name, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateAgent(ctx context.Context, name, description, prompt, schedule, triggerType string, enabled bool, maxTurns int) (*cli.AgentInfo, error) {
+	body := struct {
+		Description string `json:"description"`
+		Prompt      string `json:"prompt"`
+		Schedule    string `json:"schedule"`
+		TriggerType string `json:"trigger_type"`
+		Enabled     bool   `json:"enabled"`
+		MaxTurns    int    `json:"max_turns,omitempty"`
+	}{Description: description, Prompt: prompt, Schedule: schedule, TriggerType: triggerType, Enabled: enabled, MaxTurns: maxTurns}
+
+	var resp cli.AgentInfo
+	if err := c.do(ctx, http.MethodPut, "/v1/agents/"+name, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteAgent(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/agents/"+name, nil, nil)
+}
+
+func (c *Client) TriggerAgent(ctx context.Context, name string) (*cli.AgentRunInfo, error) {
+	var resp cli.AgentRunInfo
+	if err := c.do(ctx, http.MethodPost, "/v1/agents/"+name+"/trigger", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) ListAgentRuns(ctx context.Context, name string, limit int) ([]cli.AgentRunInfo, error) {
+	path := fmt.Sprintf("/v1/agents/%s/runs?limit=%d", name, limit)
+	var resp []cli.AgentRunInfo
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}

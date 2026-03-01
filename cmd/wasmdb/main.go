@@ -8,11 +8,18 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/russellhaering/wasmdb/internal/agent"
+	"github.com/russellhaering/wasmdb/internal/agents"
 	"github.com/russellhaering/wasmdb/internal/api"
 	"github.com/russellhaering/wasmdb/internal/auth"
+	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
 	"github.com/russellhaering/wasmdb/internal/config"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/embedding"
+	"github.com/russellhaering/wasmdb/internal/functions"
+	"github.com/russellhaering/wasmdb/internal/mcpservers"
+	"github.com/russellhaering/wasmdb/internal/memory"
+	"github.com/russellhaering/wasmdb/internal/skills"
 	"github.com/russellhaering/wasmdb/internal/storage/objstore"
 )
 
@@ -90,12 +97,60 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Set up the agent scheduler if Anthropic API key is available.
+	var scheduler *agents.Scheduler
+	if cfg.AnthropicAPIKey != "" {
+		// Register the server factory that the scheduler uses to build MCP tool groups.
+		agents.SetServerFactory(func(factoryCtx context.Context, schedulerCfg agents.SchedulerConfig) (*mcpx.ServerGroup, func(), error) {
+			fnEngine := functions.NewEngine(schedulerCfg.Registry, 0, 0)
+			fnStore := functions.NewStore(schedulerCfg.Registry)
+			skillStore := skills.NewStore(schedulerCfg.Registry, fnStore, fnEngine)
+			memoryStore := memory.NewStore(schedulerCfg.Registry)
+
+			var mcpStore *mcpservers.Store
+			if schedulerCfg.MCPServerStore != nil {
+				mcpStore = schedulerCfg.MCPServerStore
+			}
+
+			servers := mcpx.NewServerGroup()
+			tableServer := agent.NewTableServer(schedulerCfg.Registry, fnEngine, fnStore, skillStore, memoryStore, schedulerCfg.SubAgentModel, schedulerCfg.AnthropicAPIKey, mcpStore)
+			servers.AddServer("table", tableServer.Server)
+
+			if err := servers.Connect(factoryCtx); err != nil {
+				return nil, nil, err
+			}
+
+			tableServer.SetServerGroup(servers)
+
+			cleanup := func() {
+				servers.Close()
+			}
+			return servers, cleanup, nil
+		})
+
+		scheduler = agents.NewScheduler(srv.AgentStore(), agents.SchedulerConfig{
+			Registry:        registry,
+			AnthropicAPIKey: cfg.AnthropicAPIKey,
+			Model:           cfg.ChatModel,
+			SubAgentModel:   cfg.SubAgentModel,
+			FnEngine:        functions.NewEngine(registry, 0, 0),
+			FnStore:         functions.NewStore(registry),
+			MCPServerStore:  mcpservers.NewStore(registry),
+		})
+		srv.SetAgentScheduler(scheduler)
+		scheduler.Start(ctx)
+		slog.Info("agent scheduler enabled")
+	}
+
 	// Graceful shutdown.
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		slog.Info("shutting down", "signal", sig)
+		if scheduler != nil {
+			scheduler.Stop()
+		}
 		cancel()
 		srv.Shutdown(ctx)
 	}()

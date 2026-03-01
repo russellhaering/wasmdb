@@ -176,6 +176,15 @@ Registered servers are connected automatically when a chat session starts.
 Use search_tools to discover tools across all connected servers (both built-in and external).
 This is useful when you need to find a capability you don't have a specific tool for.
 
+## Background Agents
+
+You can manage background agents that run automatically on a timer schedule.
+Use manage_agent to create/update/get/list/delete agents and view their run history.
+Agents execute with the same tools you have (DB operations, code execution, etc.).
+Each agent has a prompt (the task to perform), a schedule (e.g. "5m", "1h", "24h"),
+and a trigger_type (currently only "timer" is supported; webhooks and Slack triggers are planned).
+View recent runs with the "runs" action to see execution history, token usage, and output.
+
 ## Memories (Progressive Disclosure)
 
 Use memory with progressive disclosure:

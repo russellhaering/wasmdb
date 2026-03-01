@@ -21,7 +21,10 @@ JavaScript functions execute in a QuickJS-in-Wasm sandbox (via `github.com/fasts
 Introduce first-class concepts of "agents", "skills", and "memories", all stored in the database (likely as system tables). Agents are configurable AI actors; skills define reusable capabilities an agent can invoke; memories are persistent context that agents accumulate over time and can recall in future interactions.
 
 **Done (skills):** `_skills` system table, skills store (`internal/skills`) with CRUD + execute (via linked stored function), REST API (`POST/GET/PUT/DELETE /v1/skills`, `POST /v1/skills/{name}/exec`), CLI commands (`skill create/list/get/update/delete/exec`), agent `manage_skill` + progressive-disclosure tools (`list_skills_catalog`, `get_skill_detail`), compact catalog injection in chat, and manual-only skill control (`disable_model_invocation`).
-**Remaining:** Implement skill + memory selection/ranking heuristic for catalog budgeting at scale (intent-match + recency + pinned + tag/name boosts, budget-aware packing, and selective detail fetch), plus agent first-class models + APIs.
+
+**Done (background agents):** `_agents` and `_agent_runs` system tables, agents store (`internal/agents`) with CRUD + run history, background scheduler with timer-based triggers (auto-reload every 30s, skip-if-running, per-agent re-arm), REST API (`POST/GET/PUT/DELETE /v1/agents`, `POST /v1/agents/{name}/trigger`, `GET /v1/agents/{name}/runs`), CLI commands (`agent create/list/get/update/delete/trigger/runs`), chat tool (`manage_agent`), server factory pattern to avoid circular deps between agent and agents packages. Agents run with the same MCP tools as the interactive chat agent.
+
+**Remaining:** Implement skill + memory selection/ranking heuristic for catalog budgeting at scale (intent-match + recency + pinned + tag/name boosts, budget-aware packing, and selective detail fetch). Future trigger types: webhook, Slack integration, event-driven triggers.
 
 ## Agent MCP Server Configuration ✅
 MCP servers can be registered via the `_mcp_servers` system table. Supports `streamable-http` (URL-based) and `stdio` (command-based) transports with custom headers and environment variables. Registered servers are automatically connected when chat sessions start, making their tools available to the agent.

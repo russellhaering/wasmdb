@@ -74,6 +74,39 @@ var SystemTables = []SystemTableDef{
 		},
 	},
 	{
+		Name: "_agents",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "description", Type: document.FieldTypeString},
+				{Name: "prompt", Type: document.FieldTypeString, Required: true},
+				{Name: "schedule", Type: document.FieldTypeString, Required: true},
+				{Name: "trigger_type", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "enabled", Type: document.FieldTypeBool, Indexed: true},
+				{Name: "max_turns", Type: document.FieldTypeInt},
+				{Name: "created_by", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+			},
+		},
+	},
+	{
+		Name: "_agent_runs",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "agent_id", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "agent_name", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "status", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "output", Type: document.FieldTypeString},
+				{Name: "error", Type: document.FieldTypeString},
+				{Name: "input_tokens", Type: document.FieldTypeInt},
+				{Name: "output_tokens", Type: document.FieldTypeInt},
+				{Name: "duration_ms", Type: document.FieldTypeInt},
+				{Name: "started_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+				{Name: "completed_at", Type: document.FieldTypeDatetime, Indexed: true},
+			},
+		},
+	},
+	{
 		Name: "_memories",
 		Schema: &document.Schema{
 			Fields: []document.FieldDefinition{
