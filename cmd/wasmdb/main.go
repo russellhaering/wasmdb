@@ -138,6 +138,10 @@ func main() {
 			MCPServerStore:  mcpservers.NewStore(registry),
 		})
 		srv.SetAgentScheduler(scheduler)
+
+		// Ensure built-in agents exist (e.g., ui-builder).
+		agents.EnsureBuiltinAgents(ctx, srv.AgentStore())
+
 		scheduler.Start(ctx)
 		slog.Info("agent scheduler enabled")
 	}

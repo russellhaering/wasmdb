@@ -1,7 +1,9 @@
 # TODO
 
-## Data UI Builder
-Allow creation of a UI for data stored in the database. UI configuration is stored in a system table. Use Google's A2UI framework (research in depth at implementation time). Pre-create an agent that runs daily and updates the UI based on the schema and a sample of data in the system.
+## Data UI Builder ✅
+Dashboard UI pages stored in `_ui_configs` system table, rendered at `/ui` with the A2UI component framework. Pages can include static layouts or dynamic data via `query_js` (JavaScript executed in the QuickJS sandbox with `db` API access). Template variables (`{{key}}`) inject query results into the A2UI surface JSON.
+
+**Done:** `_ui_configs` system table (name, title, description, source_tables, surface_json, query_js, auto_refresh_seconds, sort_order, enabled). `internal/uiconfig` store (CRUD). REST API (`POST/GET/PUT/DELETE /v1/ui-configs`, `POST /v1/ui-configs/{name}/render`). Dashboard web UI at `/ui` with auth, page tabs, A2UI rendering, auto-refresh, template variable replacement. Chat tool (`manage_ui`) with create/update/get/list/delete actions. CLI commands (`ui create/list/get/update/delete`). Built-in `ui-builder` background agent that runs daily (24h), inspects all user tables and their schemas, reviews existing UI pages, and incrementally creates/improves dashboard pages. Agent prompt auto-updates on server restart while preserving user-configured schedule/enabled settings.
 
 ## Rego-Based Permissions
 Add a permission system built on [OPA/Rego](https://www.openpolicyagent.org/). Policies would govern who can read/write which tables, documents, or fields. Evaluate policies per-request using the bearer token identity as input.

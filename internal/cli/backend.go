@@ -161,6 +161,12 @@ type Backend interface {
 	TriggerAgent(ctx context.Context, name string) (*AgentRunInfo, error)
 	ListAgentRuns(ctx context.Context, name string, limit int) ([]AgentRunInfo, error)
 
+	CreateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*UIConfigInfo, error)
+	ListUIConfigs(ctx context.Context) ([]UIConfigSummary, error)
+	GetUIConfig(ctx context.Context, name string) (*UIConfigDetail, error)
+	UpdateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*UIConfigInfo, error)
+	DeleteUIConfig(ctx context.Context, name string) error
+
 	Health(ctx context.Context) (*HealthStatus, error)
 	Ready(ctx context.Context) (*HealthStatus, error)
 
@@ -292,6 +298,45 @@ type AgentRunInfo struct {
 	DurationMS   int64  `json:"duration_ms"`
 	StartedAt    string `json:"started_at"`
 	CompletedAt  string `json:"completed_at,omitempty"`
+}
+
+// UIConfigInfo holds basic UI config metadata returned after create/update.
+type UIConfigInfo struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`
+	Enabled   bool   `json:"enabled"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// UIConfigSummary holds UI config metadata for list display.
+type UIConfigSummary struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Title              string   `json:"title"`
+	Description        string   `json:"description,omitempty"`
+	SourceTables       []string `json:"source_tables,omitempty"`
+	AutoRefreshSeconds int      `json:"auto_refresh_seconds,omitempty"`
+	SortOrder          int      `json:"sort_order"`
+	Enabled            bool     `json:"enabled"`
+	UpdatedAt          string   `json:"updated_at"`
+}
+
+// UIConfigDetail holds full UI config details.
+type UIConfigDetail struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Title              string   `json:"title"`
+	Description        string   `json:"description,omitempty"`
+	SourceTables       []string `json:"source_tables,omitempty"`
+	SurfaceJSON        string   `json:"surface_json"`
+	QueryJS            string   `json:"query_js,omitempty"`
+	AutoRefreshSeconds int      `json:"auto_refresh_seconds,omitempty"`
+	SortOrder          int      `json:"sort_order"`
+	Enabled            bool     `json:"enabled"`
+	CreatedBy          string   `json:"created_by"`
+	CreatedAt          string   `json:"created_at"`
+	UpdatedAt          string   `json:"updated_at"`
 }
 
 type ChatEvent struct {

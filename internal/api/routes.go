@@ -64,6 +64,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Chat.
 	mux.HandleFunc("GET /chat", s.handleChatUI)
+
+	// Dashboard UI.
+	mux.HandleFunc("GET /ui", s.handleDashboardUI)
 	mux.HandleFunc("POST /v1/chat", s.handleChatStream)
 	mux.HandleFunc("GET /v1/chat/sessions", s.handleListChatSessions)
 	mux.HandleFunc("DELETE /v1/chat/sessions/{id}", s.handleDeleteChatSession)
@@ -82,6 +85,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/mcp-servers/{name}", s.handleGetMCPServer)
 	mux.HandleFunc("PUT /v1/mcp-servers/{name}", s.handleUpdateMCPServer)
 	mux.HandleFunc("DELETE /v1/mcp-servers/{name}", s.handleDeleteMCPServer)
+
+	// UI Configs.
+	mux.HandleFunc("POST /v1/ui-configs", s.handleCreateUIConfig)
+	mux.HandleFunc("GET /v1/ui-configs", s.handleListUIConfigs)
+	mux.HandleFunc("GET /v1/ui-configs/{name}", s.handleGetUIConfig)
+	mux.HandleFunc("PUT /v1/ui-configs/{name}", s.handleUpdateUIConfig)
+	mux.HandleFunc("DELETE /v1/ui-configs/{name}", s.handleDeleteUIConfig)
+	mux.HandleFunc("POST /v1/ui-configs/{name}/render", s.handleRenderUIConfig)
 
 	// Agents.
 	mux.HandleFunc("POST /v1/agents", s.handleCreateAgent)

@@ -20,6 +20,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/mcpservers"
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
+	"github.com/russellhaering/wasmdb/internal/uiconfig"
 )
 
 // TableServerResult holds the MCP server and a function to set the server group
@@ -41,12 +42,13 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 		mcpStore = mcpServerStore[0]
 	}
 	agentStore := agents.NewStore(registry)
+	uiStore := uiconfig.NewStore(registry)
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "wasmdb-table",
 		Version: "v0.1.0",
 	}, nil)
 
-	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, memoryStore: memoryStore, mcpServerStore: mcpStore, agentStore: agentStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
+	h := &dbHandler{registry: registry, fnEngine: fnEngine, fnStore: fnStore, skillStore: skillStore, memoryStore: memoryStore, mcpServerStore: mcpStore, agentStore: agentStore, uiConfigStore: uiStore, subAgentModel: subAgentModel, anthropicAPIKey: anthropicAPIKey}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_tables",
@@ -160,6 +162,11 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 		Description: "Create, update, get, list, delete, or list runs for background agents. Agents run automatically on a timer schedule.",
 	}, h.manageAgent)
 
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "manage_ui",
+		Description: "Create, update, get, list, or delete dashboard UI pages. Each page has an A2UI surface layout and optional query_js for dynamic data. Pages appear at /ui.",
+	}, h.manageUI)
+
 	return &TableServerResult{Server: srv, handler: h}
 }
 
@@ -171,6 +178,7 @@ type dbHandler struct {
 	memoryStore     *memory.Store
 	mcpServerStore  *mcpservers.Store
 	agentStore      *agents.Store
+	uiConfigStore   *uiconfig.Store
 	subAgentModel   string
 	anthropicAPIKey string
 	// serverGroup is set by the chat manager so tools can query it.
@@ -511,6 +519,19 @@ type manageAgentInput struct {
 	Enabled     *bool  `json:"enabled,omitempty" jsonschema:"Whether the agent is enabled (default true)"`
 	MaxTurns    int    `json:"max_turns,omitempty" jsonschema:"Max agent turns (0 = default 20)"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Max results for runs action (default 20)"`
+}
+
+type manageUIInput struct {
+	Action             string   `json:"action" jsonschema:"Action: create, update, get, list, or delete"`
+	Name               string   `json:"name,omitempty" jsonschema:"UI page name (required for create, update, get, delete)"`
+	Title              string   `json:"title,omitempty" jsonschema:"Display title for the page"`
+	Description        string   `json:"description,omitempty" jsonschema:"Page description"`
+	SourceTables       []string `json:"source_tables,omitempty" jsonschema:"Tables this page reads from"`
+	SurfaceJSON        string   `json:"surface_json,omitempty" jsonschema:"A2UI surface JSON defining the layout (required for create, update)"`
+	QueryJS            string   `json:"query_js,omitempty" jsonschema:"Optional JS code to fetch/transform data. Runs in sandbox with db API."`
+	AutoRefreshSeconds int      `json:"auto_refresh_seconds,omitempty" jsonschema:"Auto-refresh interval in seconds (0 = no auto-refresh)"`
+	SortOrder          int      `json:"sort_order,omitempty" jsonschema:"Sort order for page tabs (lower = first)"`
+	Enabled            *bool    `json:"enabled,omitempty" jsonschema:"Whether page is visible (default true)"`
 }
 
 type searchToolsInput struct {
@@ -1139,6 +1160,96 @@ func toOAuthConfig(o *oauthInput) *mcpservers.OAuthConfig {
 		ClientSecret: o.ClientSecret,
 		TokenURL:     o.TokenURL,
 		Scopes:       o.Scopes,
+	}
+}
+
+func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input manageUIInput) (*mcp.CallToolResult, any, error) {
+	if h.uiConfigStore == nil {
+		return textError("UI config storage is not available."), nil, nil
+	}
+
+	switch input.Action {
+	case "create":
+		if input.Name == "" || input.SurfaceJSON == "" {
+			return textError("name and surface_json are required for create"), nil, nil
+		}
+		enabled := true
+		if input.Enabled != nil {
+			enabled = *input.Enabled
+		}
+		cfg, err := h.uiConfigStore.Create(ctx, input.Name, input.Title, input.Description, input.SourceTables, input.SurfaceJSON, input.QueryJS, input.AutoRefreshSeconds, input.SortOrder, enabled, "")
+		if err != nil {
+			return textError("Failed to create UI config: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{"created": cfg.Name, "id": cfg.ID, "title": cfg.Title}), nil, nil
+
+	case "update":
+		if input.Name == "" || input.SurfaceJSON == "" {
+			return textError("name and surface_json are required for update"), nil, nil
+		}
+		enabled := true
+		if input.Enabled != nil {
+			enabled = *input.Enabled
+		}
+		cfg, err := h.uiConfigStore.Update(ctx, input.Name, input.Title, input.Description, input.SourceTables, input.SurfaceJSON, input.QueryJS, input.AutoRefreshSeconds, input.SortOrder, enabled)
+		if err != nil {
+			return textError("Failed to update UI config: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{"updated": cfg.Name, "id": cfg.ID, "title": cfg.Title}), nil, nil
+
+	case "get":
+		if input.Name == "" {
+			return textError("name is required for get"), nil, nil
+		}
+		cfg, err := h.uiConfigStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to get UI config: " + err.Error()), nil, nil
+		}
+		if cfg == nil {
+			return textError("UI config not found: " + input.Name), nil, nil
+		}
+		return jsonResult(cfg), nil, nil
+
+	case "list":
+		configs, err := h.uiConfigStore.List(ctx)
+		if err != nil {
+			return textError("Failed to list UI configs: " + err.Error()), nil, nil
+		}
+		if len(configs) == 0 {
+			return textResult("No UI configs found."), nil, nil
+		}
+		type summary struct {
+			Name         string   `json:"name"`
+			Title        string   `json:"title"`
+			Description  string   `json:"description,omitempty"`
+			SourceTables []string `json:"source_tables,omitempty"`
+			Enabled      bool     `json:"enabled"`
+			SortOrder    int      `json:"sort_order"`
+		}
+		result := make([]summary, 0, len(configs))
+		for _, c := range configs {
+			result = append(result, summary{
+				Name:         c.Name,
+				Title:        c.Title,
+				Description:  c.Description,
+				SourceTables: c.SourceTables,
+				Enabled:      c.Enabled,
+				SortOrder:    c.SortOrder,
+			})
+		}
+		return jsonResult(result), nil, nil
+
+	case "delete":
+		if input.Name == "" {
+			return textError("name is required for delete"), nil, nil
+		}
+		if err := h.uiConfigStore.Delete(ctx, input.Name); err != nil {
+			return textError("Failed to delete UI config: " + err.Error()), nil, nil
+		}
+		return textResult("Deleted UI config: " + input.Name), nil, nil
+
+	default:
+		return textError("Unknown action: " + input.Action + ". Valid actions: create, update, get, list, delete"), nil, nil
 	}
 }
 

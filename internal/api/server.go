@@ -17,6 +17,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/mcpservers"
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
+	"github.com/russellhaering/wasmdb/internal/uiconfig"
 )
 
 type sessionContextKeyType struct{}
@@ -43,6 +44,7 @@ type Server struct {
 	mcpServerStore  *mcpservers.Store
 	agentStore      *agents.Store
 	agentScheduler  *agents.Scheduler
+	uiConfigStore   *uiconfig.Store
 }
 
 // ServerConfig configures the API server.
@@ -70,6 +72,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		memoryStore:    memory.NewStore(cfg.Registry),
 		mcpServerStore: mcpservers.NewStore(cfg.Registry),
 		agentStore:     agentStore,
+		uiConfigStore:  uiconfig.NewStore(cfg.Registry),
 	}
 
 	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)
@@ -192,7 +195,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 
 		// Auth — skip for health checks, login, and CLI login page.
 		switch r.URL.Path {
-		case "/healthz", "/readyz", "/v1/auth/login", "/auth/cli-login", "/chat",
+		case "/healthz", "/readyz", "/v1/auth/login", "/auth/cli-login", "/chat", "/ui",
 			"/v1/auth/device-login", "/v1/auth/device-login/poll", "/v1/auth/device-login/complete":
 			// No auth required.
 		default:

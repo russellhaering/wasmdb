@@ -87,6 +87,11 @@ wasmdb mcp list                          # list registered MCP servers
 wasmdb mcp get srv                       # get MCP server details
 wasmdb mcp update srv --transport stdio --command cmd  # update MCP server
 wasmdb mcp delete srv                    # delete MCP server
+wasmdb ui create mypage --surface-file s.json --title "My Page"  # create UI page
+wasmdb ui list                           # list UI pages
+wasmdb ui get mypage                     # get UI page details
+wasmdb ui update mypage --surface-file s.json  # update UI page
+wasmdb ui delete mypage                  # delete UI page
 wasmdb agent create myagent --prompt "..." --schedule 1h  # create background agent
 wasmdb agent list                        # list background agents
 wasmdb agent get myagent                 # get agent details

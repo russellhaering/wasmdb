@@ -121,4 +121,22 @@ var SystemTables = []SystemTableDef{
 			},
 		},
 	},
+	{
+		Name: "_ui_configs",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "title", Type: document.FieldTypeString},
+				{Name: "description", Type: document.FieldTypeString},
+				{Name: "source_tables", Type: document.FieldTypeStringSlice, Indexed: true},
+				{Name: "surface_json", Type: document.FieldTypeString, Required: true},
+				{Name: "query_js", Type: document.FieldTypeString},
+				{Name: "auto_refresh_seconds", Type: document.FieldTypeInt},
+				{Name: "sort_order", Type: document.FieldTypeInt, Indexed: true},
+				{Name: "enabled", Type: document.FieldTypeBool, Indexed: true},
+				{Name: "created_by", Type: document.FieldTypeString, Required: true, Indexed: true},
+				{Name: "updated_at", Type: document.FieldTypeDatetime, Required: true, Indexed: true},
+			},
+		},
+	},
 }

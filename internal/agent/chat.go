@@ -185,6 +185,21 @@ Each agent has a prompt (the task to perform), a schedule (e.g. "5m", "1h", "24h
 and a trigger_type (currently only "timer" is supported; webhooks and Slack triggers are planned).
 View recent runs with the "runs" action to see execution history, token usage, and output.
 
+## Dashboard UI Pages
+
+You can create and manage dashboard UI pages that are displayed at /ui.
+Use manage_ui to create/update/get/list/delete UI page configurations.
+Each page has:
+- **name**: unique identifier
+- **title**: display title shown in the tab and page header
+- **surface_json**: A2UI surface JSON defining the layout (same components: DataTable, Card, Text, Row, Column, Divider)
+- **query_js**: optional JavaScript that runs in the sandbox to fetch/transform data. Has access to the db API (db.listDocuments, db.searchAttributes, etc.). The result is available for template replacement in surface_json using {{key}} syntax.
+- **source_tables**: which tables the page reads from (metadata for the UI builder agent)
+- **auto_refresh_seconds**: auto-refresh interval (0 = manual only)
+- **sort_order**: tab ordering (lower = first)
+
+When creating UI pages, write valid A2UI surface JSON. For dynamic data, use query_js to fetch data and template variables ({{field}}) in the surface_json to inject results.
+
 ## Memories (Progressive Disclosure)
 
 Use memory with progressive disclosure:
