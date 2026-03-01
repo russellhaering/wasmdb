@@ -437,18 +437,37 @@ async function renderPage(name, container) {
 }
 
 // Template replacement: {{key}} or {{key.subkey}} patterns.
+// Handles two cases:
+//   1. "{{key}}" (quoted) where value is object/array -> replace entire "{{key}}" with raw JSON
+//   2. Inline {{key}} in text -> replace with stringified value
 function templateReplace(str, data) {
-  return str.replace(/\{\{([^}]+)\}\}/g, (match, path) => {
-    const keys = path.trim().split('.');
-    let val = data;
-    for (const k of keys) {
+  // First pass: handle "{{key}}" where the value is an object/array.
+  // Replace the surrounding quotes too so the JSON stays valid.
+  str = str.replace(/"\{\{([^}]+)\}\}"/g, function(match, path) {
+    var keys = path.trim().split('.');
+    var val = data;
+    for (var i = 0; i < keys.length; i++) {
       if (val == null) return match;
-      val = val[k];
+      val = val[keys[i]];
+    }
+    if (val == null) return match;
+    if (typeof val === 'object') return JSON.stringify(val);
+    // For primitives in a quoted context, keep the quotes.
+    return '"' + String(val) + '"';
+  });
+  // Second pass: handle remaining {{key}} inline in strings.
+  str = str.replace(/\{\{([^}]+)\}\}/g, function(match, path) {
+    var keys = path.trim().split('.');
+    var val = data;
+    for (var i = 0; i < keys.length; i++) {
+      if (val == null) return match;
+      val = val[keys[i]];
     }
     if (val == null) return match;
     if (typeof val === 'object') return JSON.stringify(val);
     return String(val);
   });
+  return str;
 }
 
 // A2UI renderer (same as chat UI).
