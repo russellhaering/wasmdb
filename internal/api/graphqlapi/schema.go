@@ -7,7 +7,7 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // sanitizeGraphQLName replaces characters that are invalid in GraphQL identifiers

@@ -11,7 +11,7 @@ import (
 	"github.com/russellhaering/wasmdb/internal/agents"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/functions"
-	"github.com/russellhaering/wasmdb/internal/storage/objstore"
+	"github.com/russellhaering/moraine/objstore"
 	"github.com/russellhaering/wasmdb/internal/uiconfig"
 )
 

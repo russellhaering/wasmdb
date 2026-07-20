@@ -6,8 +6,8 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/index"
 )
 
 // documentToMap converts a document.Document to a map for GraphQL resolution.

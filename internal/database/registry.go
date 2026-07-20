@@ -6,15 +6,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	moraine "github.com/russellhaering/moraine"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/indexed"
+	"github.com/russellhaering/moraine/objstore"
 	"github.com/russellhaering/wasmdb/internal/embedding"
-	"github.com/russellhaering/wasmdb/internal/storage/lsm"
-	"github.com/russellhaering/wasmdb/internal/storage/objstore"
 )
+
+// systemTableIndexTimeout bounds how long openTable waits for a system table's
+// derived indexes to become ready. Startup code (schedulers, stores) queries
+// system tables via SearchAttributes and must not observe ErrIndexNotReady.
+const systemTableIndexTimeout = 30 * time.Second
 
 // TableMeta holds persistent metadata about a table.
 type TableMeta struct {
@@ -32,16 +39,17 @@ type SystemTableDef struct {
 
 // Registry manages multiple tables.
 type Registry struct {
-	mu     sync.RWMutex
-	tables map[string]*Table
-	store     objstore.ObjectStore
-	prefix    string
-	cacheDir  string
-	embedder  *embedding.Pipeline
+	mu       sync.RWMutex
+	tables   map[string]*Table
+	store    objstore.ObjectStore
+	prefix   string
+	cacheDir string
+	embedder *embedding.Pipeline
 
 	// LSM config defaults
 	memTableMaxSize int64
 	l0CompactThresh int
+	diskCacheSize   int64
 
 	// OnSchemaChange is called after tables are created, deleted, or schemas are
 	// updated. It is called without the registry lock held; implementations must
@@ -66,6 +74,7 @@ type RegistryConfig struct {
 	Embedder        *embedding.Pipeline
 	MemTableMaxSize int64
 	L0CompactThresh int
+	DiskCacheSize   int64
 }
 
 // NewRegistry creates a new table registry.
@@ -78,6 +87,7 @@ func NewRegistry(cfg RegistryConfig) *Registry {
 		embedder:        cfg.Embedder,
 		memTableMaxSize: cfg.MemTableMaxSize,
 		l0CompactThresh: cfg.L0CompactThresh,
+		diskCacheSize:   cfg.DiskCacheSize,
 	}
 }
 
@@ -258,14 +268,22 @@ func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *docume
 		return err
 	}
 
-	oldSchema := db.Schema
-	if err := db.RebuildIndexes(ctx, oldSchema, schema); err != nil {
-		return fmt.Errorf("rebuild indexes: %w", err)
+	oldSchema := db.Schema()
+	change := document.DiffSchemas(oldSchema, schema)
+
+	// SetSchema swaps the schema and rebuilds derived indexes. Use a context
+	// detached from the request's cancellation: if the client disconnects
+	// mid-rebuild, an aborted rebuild leaves the table marked ErrIndexDegraded
+	// (only cleared by a later successful rebuild or restart). Once started, let
+	// the rebuild run to completion.
+	if err := db.SetSchema(context.WithoutCancel(ctx), schema); err != nil {
+		return fmt.Errorf("set schema: %w", err)
 	}
 
 	// Update persisted metadata.
 	meta := TableMeta{
 		Name:   name,
+		System: db.System(),
 		Schema: schema,
 	}
 	data, err := json.Marshal(meta)
@@ -274,6 +292,11 @@ func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *docume
 	}
 	if err := r.store.Put(ctx, r.metaPath(name), data, false); err != nil {
 		return err
+	}
+
+	// If the embedding config changed, kick a background re-embed of stored docs.
+	if change.EmbeddingChanged && db.embedder != nil && schema != nil && schema.EmbeddingModel != "" {
+		db.startReembed(schema.EmbeddingModel)
 	}
 
 	// UpdateSchema does not hold r.mu here (GetTable released it), so firing is
@@ -286,31 +309,67 @@ func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *docume
 func (r *Registry) openTable(ctx context.Context, name string, schema *document.Schema, system bool) (*Table, error) {
 	dbPrefix := r.dbPrefix(name)
 
-	lsmDB, err := lsm.Open(ctx, lsm.DBConfig{
+	var diskCacheDir string
+	if r.cacheDir != "" {
+		diskCacheDir = filepath.Join(r.cacheDir, "blockcache")
+	}
+
+	mdb, err := moraine.Open(ctx, moraine.DBConfig{
 		Store:           r.store,
 		Prefix:          dbPrefix,
 		MemTableMaxSize: r.memTableMaxSize,
 		L0CompactThresh: r.l0CompactThresh,
 		CompactInterval: 30 * time.Second,
+		DiskCacheDir:    diskCacheDir,
+		DiskCacheSize:   r.diskCacheSize,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("open lsm for %q: %w", name, err)
+		return nil, fmt.Errorf("open moraine for %q: %w", name, err)
 	}
 
-	tbl, err := NewTable(TableConfig{
+	idx, err := indexed.OpenTable(ctx, indexed.TableConfig{
 		Name:     name,
 		System:   system,
 		Schema:   schema,
-		DB:       lsmDB,
+		DB:       mdb,
 		CacheDir: r.cacheDir,
-		Embedder: r.embedder,
+		Embedder: embedderFor(r.embedder),
 	})
 	if err != nil {
-		return nil, err
+		mdb.Close()
+		return nil, fmt.Errorf("open indexed table for %q: %w", name, err)
 	}
-	// Back-reference so the table can invoke the registry's OnWrite hook.
-	tbl.registry = r
+
+	tbl := &Table{
+		Table:    idx,
+		db:       mdb,
+		embedder: r.embedder,
+		// Back-reference so the table can invoke the registry's OnWrite hook.
+		registry: r,
+	}
+
+	// System tables are queried at startup (schedulers, stores) and must not
+	// return ErrIndexNotReady. Bound the wait so a slow rebuild can't hang boot.
+	if system {
+		waitCtx, cancel := context.WithTimeout(ctx, systemTableIndexTimeout)
+		if err := tbl.WaitForIndexes(waitCtx); err != nil {
+			slog.Warn("system table indexes not ready within timeout",
+				"name", name, "err", err)
+		}
+		cancel()
+	}
+
 	return tbl, nil
+}
+
+// embedderFor adapts the embedding pipeline to indexed.Embedder, returning a
+// nil interface when no embedder is configured (avoids a non-nil interface
+// wrapping a nil pointer).
+func embedderFor(p *embedding.Pipeline) indexed.Embedder {
+	if p == nil {
+		return nil
+	}
+	return p
 }
 
 // EnsureSystemTables creates any system tables that don't already exist and
@@ -376,8 +435,10 @@ func (r *Registry) EnsureSystemTables(ctx context.Context, defs []SystemTableDef
 }
 
 // reconcileSystemTableSchema updates an existing system table whose stored
-// schema differs from the current definition. Index rebuilds are handled by
-// RebuildIndexes; metadata keeps its System flag and creation time.
+// schema differs from the current definition. The actual schema swap, derived
+// index rebuild, and metadata persistence (System flag preserved) go through
+// the standard UpdateSchema flow — the moraine equivalent of the pre-migration
+// RebuildIndexes path.
 func (r *Registry) reconcileSystemTableSchema(ctx context.Context, def SystemTableDef) error {
 	data, err := r.store.Get(ctx, r.metaPath(def.Name))
 	if err != nil {
@@ -402,22 +463,11 @@ func (r *Registry) reconcileSystemTableSchema(ctx context.Context, def SystemTab
 
 	slog.Info("system table schema changed, updating", "name", def.Name)
 
-	tbl, err := r.GetTable(ctx, def.Name)
-	if err != nil {
-		return err
-	}
-	if err := tbl.RebuildIndexes(ctx, meta.Schema, def.Schema); err != nil {
-		return fmt.Errorf("rebuild indexes: %w", err)
-	}
-
-	meta.Schema = def.Schema
-	meta.System = true
-	updated, err := json.Marshal(meta)
-	if err != nil {
-		return err
-	}
-	if err := r.store.Put(ctx, r.metaPath(def.Name), updated, false); err != nil {
-		return fmt.Errorf("save metadata: %w", err)
+	// UpdateSchema opens the table (preserving its System flag from stored
+	// metadata), swaps the schema via moraine's SetSchema, rebuilds derived
+	// indexes, and re-persists metadata with System() carried through.
+	if err := r.UpdateSchema(ctx, def.Name, def.Schema); err != nil {
+		return fmt.Errorf("update schema: %w", err)
 	}
 	return nil
 }
@@ -428,7 +478,7 @@ func (r *Registry) IsSystemTable(ctx context.Context, name string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	return table.System, nil
+	return table.System(), nil
 }
 
 // Close closes all open tables.

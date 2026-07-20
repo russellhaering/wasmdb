@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/index"
 )
 
 func init() {

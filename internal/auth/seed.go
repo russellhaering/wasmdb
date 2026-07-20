@@ -8,7 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // SeedUser creates an initial user if the _users table is empty.

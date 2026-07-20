@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // TestOnWriteFiresForUserTable verifies the OnWrite hook fires with the table

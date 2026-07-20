@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 	"github.com/russellhaering/wasmdb/internal/surface"
 )
 
@@ -202,7 +202,7 @@ func (r *Renderer) writableTable(ctx context.Context, name string) (*database.Ta
 	if err != nil {
 		return nil, actionError("table %q not found", name)
 	}
-	if tbl.System {
+	if tbl.System() {
 		return nil, actionError("table %q is a system table and cannot be written", name)
 	}
 	return tbl, nil

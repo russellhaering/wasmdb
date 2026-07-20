@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // doJSON runs an authenticated request with an optional JSON body and returns

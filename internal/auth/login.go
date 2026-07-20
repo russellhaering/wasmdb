@@ -7,7 +7,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // Login authenticates a user by email and password, returning a session token.

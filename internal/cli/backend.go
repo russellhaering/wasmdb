@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 
-	"github.com/russellhaering/wasmdb/internal/document"
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/index"
 )
 
 // TableInfo holds basic table metadata.

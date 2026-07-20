@@ -1,6 +1,6 @@
 package database
 
-import "github.com/russellhaering/wasmdb/internal/document"
+import "github.com/russellhaering/moraine/document"
 
 // SystemTables defines the system tables to be auto-created at startup.
 var SystemTables = []SystemTableDef{

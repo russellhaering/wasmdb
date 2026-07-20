@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 func TestExecuteInsert(t *testing.T) {

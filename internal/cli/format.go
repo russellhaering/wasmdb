@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // formatJSON writes v as indented JSON followed by a newline.

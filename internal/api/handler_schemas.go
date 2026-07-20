@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 func (s *Server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
@@ -15,12 +15,12 @@ func (s *Server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if table.Schema == nil {
+	if table.Schema() == nil {
 		writeJSON(w, 200, &document.Schema{})
 		return
 	}
 
-	writeJSON(w, 200, table.Schema)
+	writeJSON(w, 200, table.Schema())
 }
 
 func (s *Server) handleUpdateSchema(w http.ResponseWriter, r *http.Request) {

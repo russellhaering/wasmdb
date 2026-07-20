@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // dataTableSurface renders a DataTable whose rows bind to $data "rows".

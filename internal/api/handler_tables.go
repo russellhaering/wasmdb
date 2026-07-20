@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 type createTableRequest struct {
@@ -41,9 +41,9 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 201, tableResponse{
-		Name:   table.Name,
-		Schema: table.Schema,
-		System: table.System,
+		Name:   table.Name(),
+		Schema: table.Schema(),
+		System: table.System(),
 	})
 }
 
@@ -75,9 +75,9 @@ func (s *Server) handleGetTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, tableResponse{
-		Name:   table.Name,
-		Schema: table.Schema,
-		System: table.System,
+		Name:   table.Name(),
+		Schema: table.Schema(),
+		System: table.System(),
 	})
 }
 

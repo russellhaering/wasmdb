@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/index"
 )
 
 const memoriesTable = "_memories"

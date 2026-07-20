@@ -15,9 +15,9 @@ import (
 	autobotagent "github.com/russellhaering/wasmdb/internal/autobot/agent"
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/index"
 	"github.com/russellhaering/wasmdb/internal/mcpservers"
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
@@ -295,9 +295,9 @@ func (h *dbHandler) getTable(ctx context.Context, _ *mcp.CallToolRequest, input 
 		return textError("Table not found: " + input.Name), nil, nil
 	}
 
-	result := map[string]any{"name": db.Name}
-	if db.Schema != nil {
-		result["schema"] = db.Schema
+	result := map[string]any{"name": db.Name()}
+	if db.Schema() != nil {
+		result["schema"] = db.Schema()
 	}
 	return jsonResult(result), nil, nil
 }
@@ -312,7 +312,7 @@ func (h *dbHandler) createTable(ctx context.Context, _ *mcp.CallToolRequest, inp
 		return textError("Failed to create table: " + err.Error()), nil, nil
 	}
 
-	return textResult(fmt.Sprintf("Table %q created successfully.", db.Name)), nil, nil
+	return textResult(fmt.Sprintf("Table %q created successfully.", db.Name())), nil, nil
 }
 
 func (h *dbHandler) getDocument(ctx context.Context, _ *mcp.CallToolRequest, input getDocumentInput) (*mcp.CallToolResult, any, error) {

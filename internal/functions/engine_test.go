@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
-	"github.com/russellhaering/wasmdb/internal/storage/objstore"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/objstore"
 )
 
 func testRegistry(t *testing.T) *database.Registry {
@@ -882,7 +882,9 @@ func TestTableSearchText(t *testing.T) {
 	tbl, _ := reg.GetTable(ctx, "docs")
 	tbl.PutDocument(ctx, &document.Document{Content: "the quick brown fox"})
 	tbl.PutDocument(ctx, &document.Document{Content: "the lazy dog"})
-	time.Sleep(200 * time.Millisecond)
+	if err := tbl.WaitForIndexes(ctx); err != nil {
+		t.Fatalf("WaitForIndexes: %v", err)
+	}
 
 	r := eng.Execute(ctx, "var results = db.table(\"docs\").search.text(\"fox\")\nresults", nil)
 	if r.Error != "" {
@@ -905,7 +907,9 @@ func TestTableSearchAttr(t *testing.T) {
 	tbl.PutDocument(ctx, &document.Document{Attributes: map[string]any{"status": "active"}})
 	tbl.PutDocument(ctx, &document.Document{Attributes: map[string]any{"status": "inactive"}})
 	tbl.PutDocument(ctx, &document.Document{Attributes: map[string]any{"status": "active"}})
-	time.Sleep(200 * time.Millisecond)
+	if err := tbl.WaitForIndexes(ctx); err != nil {
+		t.Fatalf("WaitForIndexes: %v", err)
+	}
 
 	r := eng.Execute(ctx, `
 var results = db.table("items").search.attr([{field: "status", op: "eq", value: "active"}]);
@@ -938,7 +942,9 @@ func TestTableSearchTextWithLimit(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		tbl.PutDocument(ctx, &document.Document{Content: "matching keyword here"})
 	}
-	time.Sleep(200 * time.Millisecond)
+	if err := tbl.WaitForIndexes(ctx); err != nil {
+		t.Fatalf("WaitForIndexes: %v", err)
+	}
 
 	r := eng.Execute(ctx, "var results = db.table(\"docs\").search.text(\"keyword\", 2)\nresults", nil)
 	if r.Error != "" {

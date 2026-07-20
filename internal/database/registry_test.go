@@ -6,9 +6,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/russellhaering/wasmdb/internal/document"
-	"github.com/russellhaering/wasmdb/internal/storage/objstore"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/objstore"
+	"github.com/russellhaering/wasmdb/internal/embedding"
 )
+
+// stubEmbedder is a deterministic Embedder for tests. It returns fixed-length
+// zero vectors so no network/model is required.
+type stubEmbedder struct {
+	model string
+	dims  int
+}
+
+func (s *stubEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = make([]float32, s.dims)
+	}
+	return out, nil
+}
+
+func (s *stubEmbedder) Dimensions() int   { return s.dims }
+func (s *stubEmbedder) ModelName() string { return s.model }
 
 func newTestRegistry(t *testing.T) *Registry {
 	t.Helper()
@@ -276,8 +295,59 @@ func TestRegistryUpdateSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTable after schema update: %v", err)
 	}
-	if len(db.Schema.Fields) != 2 {
-		t.Fatalf("expected 2 fields in schema, got %d", len(db.Schema.Fields))
+	if len(db.Schema().Fields) != 2 {
+		t.Fatalf("expected 2 fields in schema, got %d", len(db.Schema().Fields))
+	}
+}
+
+// TestRegistryUpdateSchemaEmbeddingDimsChange verifies that changing a table's
+// embedding schema from one dimensionality to another succeeds. The stored doc
+// was embedded at the old dimensions, so moraine's rebuild must skip the
+// now-stale vector rather than fail (see moraine indexed.SetSchema).
+func TestRegistryUpdateSchemaEmbeddingDimsChange(t *testing.T) {
+	const (
+		d1 = 8
+		d2 = 16
+	)
+
+	stub := &stubEmbedder{model: "model-a", dims: d1}
+	reg := NewRegistry(RegistryConfig{
+		Store:    objstore.NewMemoryStore(),
+		Prefix:   "test",
+		CacheDir: t.TempDir(),
+		Embedder: embedding.NewPipeline(stub, 1, time.Millisecond),
+	})
+	defer reg.Close()
+
+	ctx := context.Background()
+
+	db, err := reg.CreateTable(ctx, "vecdb", &document.Schema{
+		EmbeddingModel:      "model-a",
+		EmbeddingDimensions: d1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// Put a doc; it is embedded at d1 dimensions via the stub.
+	doc := &document.Document{Content: "hello world"}
+	if err := db.PutDocument(ctx, doc); err != nil {
+		t.Fatalf("PutDocument: %v", err)
+	}
+
+	// Switch to a model with different dimensions. The stored doc's d1 vector is
+	// now stale relative to the d2 index; UpdateSchema must still succeed.
+	newSchema := &document.Schema{
+		EmbeddingModel:      "model-b",
+		EmbeddingDimensions: d2,
+	}
+	if err := reg.UpdateSchema(ctx, "vecdb", newSchema); err != nil {
+		t.Fatalf("UpdateSchema (dims change): %v", err)
+	}
+
+	got := db.Schema()
+	if got.EmbeddingModel != "model-b" || got.EmbeddingDimensions != d2 {
+		t.Fatalf("schema not updated: got model=%q dims=%d", got.EmbeddingModel, got.EmbeddingDimensions)
 	}
 }
 
@@ -306,7 +376,7 @@ func TestEnsureSystemTables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTable: %v", err)
 	}
-	if !table.System {
+	if !table.System() {
 		t.Fatal("expected table.System to be true")
 	}
 
@@ -345,7 +415,7 @@ func TestSystemTablePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTable after cache clear: %v", err)
 	}
-	if !table.System {
+	if !table.System() {
 		t.Fatal("expected System=true after reload")
 	}
 }

@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
-	"github.com/russellhaering/wasmdb/internal/storage/objstore"
+	"github.com/russellhaering/moraine/objstore"
 )
 
 // newTestEnv builds an in-memory registry (with system tables ensured so

@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/russellhaering/wasmdb/internal/cli"
-	"github.com/russellhaering/wasmdb/internal/document"
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/index"
 )
 
 // Client implements cli.Backend via HTTP calls to the wasmdb REST API.

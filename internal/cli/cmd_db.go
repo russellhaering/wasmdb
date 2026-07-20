@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 func init() {

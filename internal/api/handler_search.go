@@ -1,10 +1,31 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/index"
+	"github.com/russellhaering/moraine/indexed"
 )
+
+// writeSearchError maps moraine/indexed search sentinels to HTTP responses.
+// Index-readiness problems are transient (503); configuration problems where
+// the requested search mode isn't available for the table are client errors
+// (400); anything else is a 500.
+func writeSearchError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, indexed.ErrIndexNotReady):
+		writeErrorMsg(w, http.StatusServiceUnavailable, "index_not_ready",
+			"indexes are still being built; retry shortly")
+	case errors.Is(err, indexed.ErrIndexDegraded):
+		writeErrorMsg(w, http.StatusServiceUnavailable, "index_degraded", err.Error())
+	case errors.Is(err, indexed.ErrFullTextUnavailable),
+		errors.Is(err, indexed.ErrVectorUnavailable):
+		writeErrorMsg(w, http.StatusBadRequest, "search_unavailable", err.Error())
+	default:
+		writeErrorMsg(w, http.StatusInternalServerError, "internal_error", err.Error())
+	}
+}
 
 type vectorSearchRequest struct {
 	Vector []float32 `json:"vector,omitempty"`
@@ -54,7 +75,7 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		writeErrorMsg(w, 500, "internal_error", err.Error())
+		writeSearchError(w, err)
 		return
 	}
 
@@ -82,7 +103,7 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 
 	results, total, err := table.SearchText(r.Context(), req.Query, req.Limit, req.Offset)
 	if err != nil {
-		writeErrorMsg(w, 500, "internal_error", err.Error())
+		writeSearchError(w, err)
 		return
 	}
 
@@ -113,7 +134,7 @@ func (s *Server) handleAttributeSearch(w http.ResponseWriter, r *http.Request) {
 
 	results, err := table.SearchAttributes(r.Context(), req.Filters, req.Limit, req.Offset)
 	if err != nil {
-		writeErrorMsg(w, 500, "internal_error", err.Error())
+		writeSearchError(w, err)
 		return
 	}
 

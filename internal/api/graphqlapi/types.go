@@ -3,7 +3,7 @@ package graphqlapi
 import (
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/language/ast"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 )
 
 // fieldTypeEnum maps document.FieldType values to a GraphQL enum.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 	"github.com/russellhaering/wasmdb/internal/uiconfig"
 )
 

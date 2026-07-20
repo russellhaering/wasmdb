@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
+	"github.com/russellhaering/moraine/document"
 	"github.com/russellhaering/wasmdb/internal/surface"
 	"github.com/russellhaering/wasmdb/internal/uiconfig"
 )
@@ -102,8 +102,8 @@ func (g *Generator) GeneratePage(ctx context.Context, tableName string) (*PageSp
 		emptyless  bool // true for a schemaless table with zero sampled docs
 	)
 
-	if tbl.Schema != nil && len(tbl.Schema.Fields) > 0 {
-		columns, formFields, searchable, descNotes = fromSchema(tbl.Schema)
+	if schema := tbl.Schema(); schema != nil && len(schema.Fields) > 0 {
+		columns, formFields, searchable, descNotes = fromSchema(schema)
 	} else {
 		var docs []*document.Document
 		docs, err = sampleDocuments(ctx, tbl)

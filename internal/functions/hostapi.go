@@ -8,8 +8,8 @@ import (
 
 	"github.com/fastschema/qjs"
 	"github.com/russellhaering/wasmdb/internal/database"
-	"github.com/russellhaering/wasmdb/internal/document"
-	"github.com/russellhaering/wasmdb/internal/index"
+	"github.com/russellhaering/moraine/document"
+	"github.com/russellhaering/moraine/index"
 )
 
 // bindDBAPI injects the `db` global object into the JS context.
@@ -46,7 +46,7 @@ func bindDBAPI(jsCtx *qjs.Context, registry *database.Registry, ctx context.Cont
 		if err != nil {
 			return nil, fmt.Errorf("db.createTable: %w", err)
 		}
-		return toJsJSON(jsCtx, map[string]any{"name": tbl.Name})
+		return toJsJSON(jsCtx, map[string]any{"name": tbl.Name()})
 	}))
 
 	// db.deleteTable(name) → true

@@ -22,9 +22,10 @@ import (
 	"github.com/russellhaering/wasmdb/internal/mcpservers"
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
-	"github.com/russellhaering/wasmdb/internal/storage/objstore"
 	"github.com/russellhaering/wasmdb/internal/uiconfig"
 	"github.com/russellhaering/wasmdb/internal/uigen"
+
+	"github.com/russellhaering/moraine/objstore"
 )
 
 func main() {
@@ -71,6 +72,7 @@ func main() {
 		Embedder:        embPipeline,
 		MemTableMaxSize: cfg.MemTableMaxSize,
 		L0CompactThresh: cfg.L0CompactThresh,
+		DiskCacheSize:   cfg.CacheMaxSize,
 	})
 	defer registry.Close()
 
