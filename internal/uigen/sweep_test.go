@@ -112,6 +112,42 @@ func TestSweepKeepsUserPageForDroppedTable(t *testing.T) {
 	}
 }
 
+// TestSweepIdempotentNoUpdates verifies that a second consecutive sweep over an
+// unchanged schema/data set reports zero Updated: because generated output is
+// deterministic, the regenerated page is byte-identical and the store Update is
+// skipped.
+func TestSweepIdempotentNoUpdates(t *testing.T) {
+	ctx, reg, store, _, gen := newTestGen(t)
+	createTable(t, ctx, reg, "orders", ordersSchema())
+	postsTbl := createTable(t, ctx, reg, "posts", nil)
+	putDoc(t, ctx, postsTbl, map[string]any{"title": "Hello", "views": 5})
+
+	res1, err := gen.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("first Sweep: %v", err)
+	}
+	if len(res1.Created) != 2 {
+		t.Fatalf("expected 2 created on first sweep, got %v", res1.Created)
+	}
+	// Ensure both pages are visible before the second sweep.
+	waitGet(t, ctx, store, "tbl-orders")
+	waitGet(t, ctx, store, "tbl-posts")
+
+	res2, err := gen.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("second Sweep: %v", err)
+	}
+	if len(res2.Updated) != 0 {
+		t.Fatalf("expected 0 updated on identical re-sweep, got %v", res2.Updated)
+	}
+	if len(res2.Created) != 0 {
+		t.Fatalf("expected 0 created on second sweep, got %v", res2.Created)
+	}
+	if !contains(res2.Skipped, "tbl-orders") || !contains(res2.Skipped, "tbl-posts") {
+		t.Fatalf("expected both pages skipped as unchanged, got skipped=%v", res2.Skipped)
+	}
+}
+
 func contains(ss []string, s string) bool {
 	for _, x := range ss {
 		if x == s {

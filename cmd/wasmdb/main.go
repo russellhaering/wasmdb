@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/russellhaering/wasmdb/internal/agent"
 	"github.com/russellhaering/wasmdb/internal/agents"
@@ -21,6 +22,8 @@ import (
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
 	"github.com/russellhaering/wasmdb/internal/storage/objstore"
+	"github.com/russellhaering/wasmdb/internal/uiconfig"
+	"github.com/russellhaering/wasmdb/internal/uigen"
 )
 
 func main() {
@@ -97,6 +100,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Deterministic UI scaffold generator + debounced sweeper. Engines are
+	// lightweight, so we build a dedicated functions engine here rather than
+	// reaching into the server's internals.
+	uiEngine := functions.NewEngine(registry, 0, 0)
+	uiStore := uiconfig.NewStore(registry)
+	uiRenderer := uiconfig.NewRenderer(registry, uiEngine)
+	uiGenerator := uigen.New(registry, uiStore, uiRenderer)
+	sweeper := uigen.NewSweeper(uiGenerator, 5*time.Second, slog.Default())
+	defer sweeper.Stop()
+
+	// Chain the scaffold sweep onto schema changes. api.NewServer already
+	// installed an OnSchemaChange closure (GraphQL rebuild); wrap it so both run.
+	prevOnSchemaChange := registry.OnSchemaChange
+	registry.OnSchemaChange = func(ctx context.Context) {
+		if prevOnSchemaChange != nil {
+			prevOnSchemaChange(ctx)
+		}
+		sweeper.Kick("schema-change")
+	}
+
+	// A document write into a (non-system) table can add inferred columns to a
+	// schemaless table's scaffold page. Kick is cheap and non-blocking.
+	registry.OnWrite = func(table string) {
+		sweeper.Kick("write:" + table)
+	}
+
 	// Set up the agent scheduler if Anthropic API key is available.
 	var scheduler *agents.Scheduler
 	if cfg.AnthropicAPIKey != "" {
@@ -144,7 +173,26 @@ func main() {
 
 		scheduler.Start(ctx)
 		slog.Info("agent scheduler enabled")
+
+		// When a sweep creates NEW scaffold pages, kick off the ui-builder LLM
+		// polish pass so the enhanced UI follows the scaffold instead of waiting
+		// for the agent's next scheduled run. Only fires on creation (not updates)
+		// to bound LLM cost; failures are logged, never fatal.
+		sched := scheduler
+		sweeper.OnNewPages = func(created []string) {
+			if _, err := sched.RunAgent(context.Background(), "ui-builder"); err != nil {
+				slog.Error("uigen: ui-builder chaining failed", "created", created, "err", err)
+			}
+		}
 	}
+
+	// Startup sweep: generate scaffold pages for any tables lacking one. Run it in
+	// a goroutine so slow object-store I/O never blocks the server from listening.
+	go func() {
+		if err := sweeper.SweepNow(ctx); err != nil {
+			slog.Error("uigen: startup scaffold sweep failed", "err", err)
+		}
+	}()
 
 	// Graceful shutdown.
 	go func() {
@@ -152,6 +200,7 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		slog.Info("shutting down", "signal", sig)
+		sweeper.Stop()
 		if scheduler != nil {
 			scheduler.Stop()
 		}

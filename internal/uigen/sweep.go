@@ -79,6 +79,15 @@ func (g *Generator) Sweep(ctx context.Context) (*SweepResult, error) {
 			continue
 		}
 
+		// Generated output is deterministic, so most sweeps regenerate a page
+		// byte-for-byte identical to the stored one. Skip the write in that case
+		// to keep repeated sweeps cheap and quiet (no spurious "updated" logs and
+		// no needless LSM churn / updated_at bumps).
+		if unchanged(cur, spec) {
+			result.Skipped = append(result.Skipped, pageName)
+			continue
+		}
+
 		if _, err := g.store.Update(ctx, pageName, uiconfig.UpdateParams{
 			Title:              &spec.Title,
 			Description:        &spec.Description,
@@ -114,6 +123,19 @@ func (g *Generator) Sweep(ctx context.Context) (*SweepResult, error) {
 	}
 
 	return result, nil
+}
+
+// unchanged reports whether regenerating cur would produce a byte-identical
+// page, comparing only the fields Sweep patches via Update. source_tables and
+// auto_refresh_seconds are omitted deliberately: they are constant for a given
+// table name, so the load-bearing content is title/description/surface/actions/
+// query.
+func unchanged(cur *uiconfig.UIConfig, spec *PageSpec) bool {
+	return cur.Title == spec.Title &&
+		cur.Description == spec.Description &&
+		cur.SurfaceJSON == spec.SurfaceJSON &&
+		cur.ActionsJSON == spec.ActionsJSON &&
+		cur.QueryJS == spec.QueryJS
 }
 
 // sourceTableOf resolves the table a scaffold page was generated for, preferring
