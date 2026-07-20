@@ -112,7 +112,7 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "execute_code",
-		Description: "Execute JavaScript code in a sandboxed environment with access to the db API for database operations. Use for bulk operations, data transformations, analytics, aggregations, finding duplicates, or any logic easier to express in code.",
+		Description: "Execute JavaScript code in a sandboxed environment with access to the db API for database operations. Use for bulk operations, data transformations, analytics, aggregations, finding duplicates, or any logic easier to express in code. To return a value, define `function handler(params)` and return from it — a top-level `return` is a syntax error. Standard JS builtins (Date, Math, JSON) are available; console.log output is captured.",
 	}, h.executeCode)
 
 	mcp.AddTool(srv, &mcp.Tool{

@@ -53,6 +53,9 @@ old inline UI surface fences; that format has been removed and now renders as pl
 
 You can execute JavaScript code using the execute_code tool. The code runs in a
 sandboxed environment with access to a db global object for database operations.
+Standard JS builtins (Date, Math, JSON) are available and console.log output is
+captured. To return a value, define "function handler(params)" and return from
+it — a top-level "return" outside a function is a syntax error.
 
 Available db methods:
 - db.tables() — list all tables
