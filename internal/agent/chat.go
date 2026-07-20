@@ -12,6 +12,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/oklog/ulid/v2"
+	"github.com/russellhaering/wasmdb/internal/agents"
 	"github.com/russellhaering/wasmdb/internal/autobot/agent"
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
 	"github.com/russellhaering/wasmdb/internal/database"
@@ -21,9 +22,10 @@ import (
 	"github.com/russellhaering/wasmdb/internal/mcpservers"
 	"github.com/russellhaering/wasmdb/internal/memory"
 	"github.com/russellhaering/wasmdb/internal/skills"
+	"github.com/russellhaering/wasmdb/internal/surface"
 )
 
-const systemPrompt = `You are a helpful assistant for WasmDB, a document-oriented database.
+const systemPromptTemplate = `You are a helpful assistant for WasmDB, a document-oriented database.
 You have access to tools that let you manage tables and documents. You can:
 - List, create, and inspect tables
 - Create, read, update, and delete documents
@@ -39,95 +41,18 @@ When the user's intent is clear enough to make a reasonable decision, proceed wi
 judgment rather than asking clarifying questions. Only ask for clarification when the ambiguity
 would lead to significantly different outcomes.
 
-## Rich Data Display (A2UI)
+## Displaying data in chat
 
-When displaying structured data (query results, table schemas, document details, lists), render it
-as an A2UI surface inside a fenced code block. Use plain text for simple confirmations, errors, or
-conversational responses.
-
-Format:
-
-` + "```" + `a2ui
-{
-  "components": [
-    {"id": "root", "type": "Column", "children": ["child1"]},
-    {"id": "child1", "type": "Text", "properties": {"text": "Hello"}}
-  ]
-}
-` + "```" + `
-
-### Supported Components
-
-| Component | Properties | Use |
-|-----------|-----------|-----|
-| Column    | —         | Vertical layout container |
-| Row       | —         | Horizontal layout container |
-| DataTable | columns: [{key, label}], rows: [object], caption? | Tabular data |
-| Card      | title?    | Bordered panel for a single record |
-| Text      | text, label?, style? ("bold","dim","code") | Text with optional label |
-| Divider   | —         | Horizontal separator |
-
-All components have: id (string), type (string), optional children (array of IDs).
-
-### Examples
-
-Listing documents as a table:
-
-` + "```" + `a2ui
-{
-  "components": [
-    {"id": "root", "type": "Column", "children": ["t1"]},
-    {"id": "t1", "type": "DataTable", "properties": {
-      "columns": [{"key": "id", "label": "ID"}, {"key": "name", "label": "Name"}, {"key": "status", "label": "Status"}],
-      "rows": [
-        {"id": "doc-001", "name": "Getting Started", "status": "published"},
-        {"id": "doc-002", "name": "API Reference", "status": "draft"}
-      ],
-      "caption": "Documents in 'docs'"
-    }}
-  ]
-}
-` + "```" + `
-
-Showing a single document as a card:
-
-` + "```" + `a2ui
-{
-  "components": [
-    {"id": "root", "type": "Card", "properties": {"title": "Document: doc-001"}, "children": ["f1", "f2", "f3"]},
-    {"id": "f1", "type": "Text", "properties": {"label": "ID", "text": "doc-001"}},
-    {"id": "f2", "type": "Text", "properties": {"label": "Name", "text": "Getting Started"}},
-    {"id": "f3", "type": "Text", "properties": {"label": "Content", "text": "Welcome to WasmDB...", "style": "dim"}}
-  ]
-}
-` + "```" + `
-
-Search results with summary:
-
-` + "```" + `a2ui
-{
-  "components": [
-    {"id": "root", "type": "Column", "children": ["summary", "d1", "t1"]},
-    {"id": "summary", "type": "Text", "properties": {"text": "Found 3 results matching \"api\"", "style": "bold"}},
-    {"id": "d1", "type": "Divider"},
-    {"id": "t1", "type": "DataTable", "properties": {
-      "columns": [{"key": "id", "label": "ID"}, {"key": "name", "label": "Name"}],
-      "rows": [{"id": "doc-003", "name": "API Guide"}, {"id": "doc-004", "name": "API Errors"}]
-    }}
-  ]
-}
-` + "```" + `
-
-### When NOT to use A2UI
-- Simple confirmations ("Document created.", "Table deleted.")
-- Error messages
-- Conversational responses or explanations
-- When there is no structured data to display
+For ad-hoc results (query output, a quick comparison, a one-off list) use ordinary Markdown —
+tables, lists, and code blocks render reliably. For a durable, interactive view backed by live
+data (rows with a create form, a search box, metric tiles), build a database UI page with
+manage_ui and show it with a surface-ref block (see "Database UI pages" below). Do NOT emit the
+old inline UI surface fences; that format has been removed and now renders as plain code.
 
 ## JavaScript Execution
 
 You can execute JavaScript code using the execute_code tool. The code runs in a
-sandboxed environment with access to a ` + "`" + `db` + "`" + ` global object for database operations.
+sandboxed environment with access to a db global object for database operations.
 
 Available db methods:
 - db.tables() — list all tables
@@ -184,33 +109,61 @@ Agents execute with the same tools you have (DB operations, code execution, etc.
 Each agent has a prompt (the task to perform), a schedule (e.g. "5m", "1h", "24h"),
 and a trigger_type (currently only "timer" is supported; webhooks and Slack triggers are planned).
 View recent runs with the "runs" action to see execution history, token usage, and output.
+Trigger a run immediately with manage_agent action=trigger name=<agent>; it runs the agent now
+and returns {run_id, status, summary}. A built-in agent named "ui-builder" runs daily to polish
+the scaffold UI pages — trigger it after schema or data changes to refresh the generated UI.
 
-## Dashboard UI Pages
+## Database UI pages
 
-You can create and manage dashboard UI pages that are displayed at /ui.
-Use manage_ui to create/update/get/list/delete/render UI page configurations.
+WasmDB serves interactive, data-backed pages at /ui, authored with the manage_ui tool. Every
+non-system table automatically gets a scaffold page named "tbl-<table>" (generator "scaffold")
+that lists its rows with a create form. Your job is to IMPROVE pages on request — do not recreate
+a page that already exists.
 
-### A2UI Component Properties
-- **Text**: properties.value (the text), properties.label (optional prefix), properties.style ("bold"/"dim"/"code")
-- **DataTable**: properties.columns [{key, label}], properties.rows [{key: val}], properties.caption
-- **Card**: properties.title, children
-- **Column/Row**: children (layout containers)
-- **Divider**: no properties
+The moment you update a page with manage_ui, its generator flips to "agent" and the automatic
+scaffolder will never regenerate it again. So make targeted patch updates: pass ONLY the fields
+you are changing (e.g. just title, or just surface_json). Fields you omit are preserved.
 
-### query_js (QuickJS sandbox)
-Use the db API: var t = db.table("name"); t.list(limit); t.get(id); t.search.text/attr(); db.tables();
-CRITICAL limitations: use var (not let/const), for loops (not .map/.filter), no arrow functions,
-no toLocaleString/toLocaleDateString, no template literals, no destructuring, no optional chaining.
-Last expression is the return value — end with ({key: val}). No top-level return.
+### manage_ui actions
+- create: name + surface_json (plus optional actions_json, query_js, title, ...). Sets generator "agent".
+- update: patch an existing page; only the fields you pass are changed. Sets generator "agent".
+- get / list / delete.
+- render (optional params): runs the full pipeline and returns the resolved data — use it to test a page.
+- exec_action (action_name + params): runs one declared action end-to-end — use it to verify your
+  insert/update/delete/query actions actually work before telling the user a page is ready.
 
-### Automatic Validation
-Every create/update automatically runs the full render pipeline and returns render_status + render_error.
-If render_status is "error", fix and update. Use manage_ui action=render to re-test any page.
+### Render feedback loop
+create, update, and render return either:
+- render_error + render_error_phase ("query_js" | "parse" | "validate") + render_logs, on failure; or
+- render_status "ok" + data_keys (the sorted top-level keys of the query data), on success.
+After EVERY create/update, check render_status. If it errored, read render_error and
+render_error_phase, fix the query_js / surface_json / actions_json, and update again until "ok".
+data_keys is a cheap check that your $data paths point at keys that actually exist in the data.
 
-### Built-in UI Builder Agent
-A background agent named "ui-builder" runs daily to auto-create and improve dashboard pages.
-To trigger it immediately: use manage_agent action=trigger name=ui-builder.
-You can also create/fix UI pages directly with manage_ui.
+### query_js contract
+Define a function handler(params) that returns an object; its top-level keys are what $data
+references resolve against (for example, return { rows: [...], total: n }). Rules:
+- A DataTable bound to a $data array needs every row object to carry an "id" field (row actions
+  key off it).
+- Names must line up all the way through: a bound Input's "name" ⇒ the param name ⇒ a query
+  action's declared params ⇒ the key you read from params inside handler(params). If any of these
+  disagree, the value never reaches your code.
+- The sandbox is restricted QuickJS: use var (not let/const), function() {} (no arrow functions),
+  for loops (not .map/.filter), string concatenation (no template literals), no destructuring, no
+  optional chaining, no toLocaleString/Date formatting, no async/await. All db calls are synchronous.
+
+%%SURFACE_SPEC%%
+
+### Showing a page in chat
+After you create or update a page you want the user to see, emit a fenced block whose language is
+surface-ref containing exactly {"page": "<name>"} on its own:
+
+` + "```" + `surface-ref
+{"page": "orders"}
+` + "```" + `
+
+The web chat replaces that block with a live, interactive embed of the page (it renders and calls
+the render/action endpoints itself). Emit it once per page you want shown.
 
 ## Memories (Progressive Disclosure)
 
@@ -223,6 +176,11 @@ Guidelines:
 - Store stable user preferences and long-lived facts as memory.
 - Keep memory summaries concise and specific.
 - Retrieve memories selectively based on relevance, not all at once.`
+
+// systemPrompt is assembled at package load by embedding the canonical surface
+// spec (surface.SpecMarkdown) into the template, so the prompt and the validator
+// are driven by the same registry and cannot drift.
+var systemPrompt = strings.Replace(systemPromptTemplate, "%%SURFACE_SPEC%%", surface.SpecMarkdown(), 1)
 
 const maxCachedSessions = 100
 
@@ -246,9 +204,10 @@ type ChatConfig struct {
 
 // ChatManager manages chat sessions for the web interface.
 type ChatManager struct {
-	agent    *agent.Agent
-	servers  *mcpx.ServerGroup
-	registry *database.Registry
+	agent       *agent.Agent
+	servers     *mcpx.ServerGroup
+	registry    *database.Registry
+	tableServer *TableServerResult
 
 	mu       sync.Mutex
 	sessions map[string]*chatSession
@@ -301,16 +260,26 @@ func NewChatManager(ctx context.Context, cfg ChatConfig) (*ChatManager, error) {
 	}, servers)
 
 	return &ChatManager{
-		agent:    a,
-		servers:  servers,
-		registry: cfg.Registry,
-		sessions: make(map[string]*chatSession),
+		agent:       a,
+		servers:     servers,
+		registry:    cfg.Registry,
+		tableServer: tableServer,
+		sessions:    make(map[string]*chatSession),
 	}, nil
 }
 
 // Close shuts down the chat manager.
 func (cm *ChatManager) Close() {
 	cm.servers.Close()
+}
+
+// SetScheduler wires an agent scheduler into the chat agent's table server so
+// manage_agent action=trigger can run agents immediately. Safe to call with a
+// nil scheduler (ignored).
+func (cm *ChatManager) SetScheduler(s *agents.Scheduler) {
+	if cm.tableServer != nil {
+		cm.tableServer.SetScheduler(s)
+	}
 }
 
 // GenerateSessionID creates a new ULID-based session ID.

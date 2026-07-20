@@ -32,20 +32,20 @@ func SessionFromContext(ctx context.Context) *auth.Session {
 
 // Server is the HTTP server for the WasmDB API.
 type Server struct {
-	httpServer  *http.Server
-	registry    *database.Registry
-	graphql     *graphqlapi.Handler
-	chatManager *agent.ChatManager
-	sessions    *auth.SessionManager
-	fnEngine    *functions.Engine
-	fnStore     *functions.Store
-	skillStore      *skills.Store
-	memoryStore     *memory.Store
-	mcpServerStore  *mcpservers.Store
-	agentStore      *agents.Store
-	agentScheduler  *agents.Scheduler
-	uiConfigStore   *uiconfig.Store
-	uiRenderer      *uiconfig.Renderer
+	httpServer     *http.Server
+	registry       *database.Registry
+	graphql        *graphqlapi.Handler
+	chatManager    *agent.ChatManager
+	sessions       *auth.SessionManager
+	fnEngine       *functions.Engine
+	fnStore        *functions.Store
+	skillStore     *skills.Store
+	memoryStore    *memory.Store
+	mcpServerStore *mcpservers.Store
+	agentStore     *agents.Store
+	agentScheduler *agents.Scheduler
+	uiConfigStore  *uiconfig.Store
+	uiRenderer     *uiconfig.Renderer
 }
 
 // ServerConfig configures the API server.
@@ -129,9 +129,13 @@ func (s *Server) AgentStore() *agents.Store {
 	return s.agentStore
 }
 
-// SetAgentScheduler sets the agent scheduler on the server for trigger endpoints.
+// SetAgentScheduler sets the agent scheduler on the server for trigger endpoints
+// and wires it into the chat agent so manage_agent action=trigger works.
 func (s *Server) SetAgentScheduler(scheduler *agents.Scheduler) {
 	s.agentScheduler = scheduler
+	if s.chatManager != nil {
+		s.chatManager.SetScheduler(scheduler)
+	}
 }
 
 // Start begins listening for requests.

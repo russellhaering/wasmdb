@@ -707,18 +707,19 @@ func (c *Client) ListAgentRuns(ctx context.Context, name string, limit int) ([]c
 	return resp, nil
 }
 
-func (c *Client) CreateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*cli.UIConfigInfo, error) {
+func (c *Client) CreateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, actionsJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*cli.UIConfigInfo, error) {
 	body := struct {
 		Name               string   `json:"name"`
 		Title              string   `json:"title"`
 		Description        string   `json:"description"`
 		SourceTables       []string `json:"source_tables,omitempty"`
 		SurfaceJSON        string   `json:"surface_json"`
+		ActionsJSON        string   `json:"actions_json,omitempty"`
 		QueryJS            string   `json:"query_js,omitempty"`
 		AutoRefreshSeconds int      `json:"auto_refresh_seconds,omitempty"`
 		SortOrder          int      `json:"sort_order"`
 		Enabled            bool     `json:"enabled"`
-	}{Name: name, Title: title, Description: description, SourceTables: sourceTables, SurfaceJSON: surfaceJSON, QueryJS: queryJS, AutoRefreshSeconds: autoRefreshSec, SortOrder: sortOrder, Enabled: enabled}
+	}{Name: name, Title: title, Description: description, SourceTables: sourceTables, SurfaceJSON: surfaceJSON, ActionsJSON: actionsJSON, QueryJS: queryJS, AutoRefreshSeconds: autoRefreshSec, SortOrder: sortOrder, Enabled: enabled}
 
 	var resp cli.UIConfigInfo
 	if err := c.do(ctx, http.MethodPost, "/v1/ui/pages", body, &resp); err != nil {
@@ -743,20 +744,35 @@ func (c *Client) GetUIConfig(ctx context.Context, name string) (*cli.UIConfigDet
 	return &resp, nil
 }
 
-func (c *Client) UpdateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*cli.UIConfigInfo, error) {
+func (c *Client) UpdateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, actionsJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*cli.UIConfigInfo, error) {
 	body := struct {
 		Title              string   `json:"title"`
 		Description        string   `json:"description"`
 		SourceTables       []string `json:"source_tables,omitempty"`
 		SurfaceJSON        string   `json:"surface_json"`
+		ActionsJSON        string   `json:"actions_json,omitempty"`
 		QueryJS            string   `json:"query_js,omitempty"`
 		AutoRefreshSeconds int      `json:"auto_refresh_seconds,omitempty"`
 		SortOrder          int      `json:"sort_order"`
 		Enabled            bool     `json:"enabled"`
-	}{Title: title, Description: description, SourceTables: sourceTables, SurfaceJSON: surfaceJSON, QueryJS: queryJS, AutoRefreshSeconds: autoRefreshSec, SortOrder: sortOrder, Enabled: enabled}
+	}{Title: title, Description: description, SourceTables: sourceTables, SurfaceJSON: surfaceJSON, ActionsJSON: actionsJSON, QueryJS: queryJS, AutoRefreshSeconds: autoRefreshSec, SortOrder: sortOrder, Enabled: enabled}
 
 	var resp cli.UIConfigInfo
 	if err := c.do(ctx, http.MethodPatch, "/v1/ui/pages/"+name, body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// RenderUIConfig POSTs to the page's render endpoint with optional params and
+// returns the resolved data (or the render error).
+func (c *Client) RenderUIConfig(ctx context.Context, name string, params map[string]string) (*cli.UIRenderResult, error) {
+	body := struct {
+		Params map[string]string `json:"params,omitempty"`
+	}{Params: params}
+
+	var resp cli.UIRenderResult
+	if err := c.do(ctx, http.MethodPost, "/v1/ui/pages/"+name+"/render", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

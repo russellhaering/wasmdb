@@ -150,6 +150,11 @@ func main() {
 			}
 
 			tableServer.SetServerGroup(servers)
+			// Scheduler-spawned agents can trigger other agents too. TriggerAgent
+			// refuses to start an agent that is already running, so an agent cannot
+			// recursively trigger itself. scheduler is assigned just below and read
+			// when this closure runs (at agent execution time), so the capture is live.
+			tableServer.SetScheduler(scheduler)
 
 			cleanup := func() {
 				servers.Close()

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -11,7 +12,7 @@ func init() {
 	register(command{
 		noun:        "ui",
 		verb:        "create",
-		usage:       "wasmdb ui create <name> --surface-file <file> [--title <t>] [--description <d>] [--source-tables <t1,t2>] [--query-file <file>] [--auto-refresh <sec>] [--sort-order <n>] [--disabled]",
+		usage:       "wasmdb ui create <name> --surface-file <file> [--actions-file <file>] [--title <t>] [--description <d>] [--source-tables <t1,t2>] [--query-file <file>] [--auto-refresh <sec>] [--sort-order <n>] [--disabled]",
 		description: "Create a dashboard UI page",
 		run:         uiCreate,
 	})
@@ -32,9 +33,16 @@ func init() {
 	register(command{
 		noun:        "ui",
 		verb:        "update",
-		usage:       "wasmdb ui update <name> --surface-file <file> [--title <t>] [--description <d>] [--source-tables <t1,t2>] [--query-file <file>] [--auto-refresh <sec>] [--sort-order <n>] [--disabled]",
+		usage:       "wasmdb ui update <name> --surface-file <file> [--actions-file <file>] [--title <t>] [--description <d>] [--source-tables <t1,t2>] [--query-file <file>] [--auto-refresh <sec>] [--sort-order <n>] [--disabled]",
 		description: "Update a dashboard UI page",
 		run:         uiUpdate,
+	})
+	register(command{
+		noun:        "ui",
+		verb:        "render",
+		usage:       "wasmdb ui render <name> [--param k=v ...] [--json]",
+		description: "Render a UI page and print its resolved data",
+		run:         uiRender,
 	})
 	register(command{
 		noun:        "ui",
@@ -64,6 +72,11 @@ func uiCreate(ctx *cmdContext) error {
 		return fmt.Errorf("query: %w", err)
 	}
 
+	actionsJSON, err := resolveContentFlag(ctx, "actions", "actions-file")
+	if err != nil {
+		return fmt.Errorf("actions: %w", err)
+	}
+
 	title := ctx.flag("title")
 	description := ctx.flag("description")
 	sourceTables := parseCommaSeparated(ctx.flag("source-tables"))
@@ -71,7 +84,7 @@ func uiCreate(ctx *cmdContext) error {
 	sortOrder := parseIntFlag(ctx.flag("sort-order"), 0)
 	enabled := !ctx.hasFlag("disabled")
 
-	result, err := ctx.backend.CreateUIConfig(ctx, name, title, description, sourceTables, surface, queryJS, autoRefresh, sortOrder, enabled)
+	result, err := ctx.backend.CreateUIConfig(ctx, name, title, description, sourceTables, surface, actionsJSON, queryJS, autoRefresh, sortOrder, enabled)
 	if err != nil {
 		return err
 	}
@@ -143,10 +156,16 @@ func uiGet(ctx *cmdContext) error {
 	}
 	fmt.Fprintf(ctx.stdout, "Created:       %s\n", config.CreatedAt)
 	fmt.Fprintf(ctx.stdout, "Updated:       %s\n", config.UpdatedAt)
+	if config.Generator != "" {
+		fmt.Fprintf(ctx.stdout, "Generator:     %s\n", config.Generator)
+	}
 	if config.QueryJS != "" {
 		fmt.Fprintf(ctx.stdout, "\nQuery JS:\n%s\n", config.QueryJS)
 	}
 	fmt.Fprintf(ctx.stdout, "\nSurface JSON:\n%s\n", config.SurfaceJSON)
+	if config.ActionsJSON != "" {
+		fmt.Fprintf(ctx.stdout, "\nActions JSON:\n%s\n", config.ActionsJSON)
+	}
 	return nil
 }
 
@@ -169,6 +188,11 @@ func uiUpdate(ctx *cmdContext) error {
 		return fmt.Errorf("query: %w", err)
 	}
 
+	actionsJSON, err := resolveContentFlag(ctx, "actions", "actions-file")
+	if err != nil {
+		return fmt.Errorf("actions: %w", err)
+	}
+
 	title := ctx.flag("title")
 	description := ctx.flag("description")
 	sourceTables := parseCommaSeparated(ctx.flag("source-tables"))
@@ -176,7 +200,7 @@ func uiUpdate(ctx *cmdContext) error {
 	sortOrder := parseIntFlag(ctx.flag("sort-order"), 0)
 	enabled := !ctx.hasFlag("disabled")
 
-	result, err := ctx.backend.UpdateUIConfig(ctx, name, title, description, sourceTables, surface, queryJS, autoRefresh, sortOrder, enabled)
+	result, err := ctx.backend.UpdateUIConfig(ctx, name, title, description, sourceTables, surface, actionsJSON, queryJS, autoRefresh, sortOrder, enabled)
 	if err != nil {
 		return err
 	}
@@ -186,6 +210,161 @@ func uiUpdate(ctx *cmdContext) error {
 	}
 	fmt.Fprintf(ctx.stdout, "Updated UI page %q\n", result.Name)
 	return nil
+}
+
+// uiRender renders a page server-side and prints the resolved data as aligned
+// tables (array-of-object keys) and key: value lines (scalar keys), or the
+// render error.
+func uiRender(ctx *cmdContext) error {
+	if len(ctx.args) < 1 {
+		return fmt.Errorf("page name required")
+	}
+	name := ctx.args[0]
+
+	params := map[string]string{}
+	for _, kv := range ctx.flagAll("param") {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			return fmt.Errorf("invalid --param %q (want key=value)", kv)
+		}
+		params[strings.TrimSpace(k)] = v
+	}
+
+	result, err := ctx.backend.RenderUIConfig(ctx, name, params)
+	if err != nil {
+		return err
+	}
+
+	if ctx.json {
+		return formatJSON(ctx.stdout, result)
+	}
+
+	if result.Error != "" {
+		phase := result.ErrorPhase
+		if phase == "" {
+			phase = "render"
+		}
+		fmt.Fprintf(ctx.stderr, "render error (%s): %s\n", phase, result.Error)
+		for _, line := range result.Logs {
+			fmt.Fprintf(ctx.stderr, "  log: %s\n", line)
+		}
+		return fmt.Errorf("page %q failed to render", name)
+	}
+
+	title := result.Title
+	if title == "" {
+		title = name
+	}
+	fmt.Fprintf(ctx.stdout, "%s\n", title)
+	if result.Description != "" {
+		fmt.Fprintf(ctx.stdout, "%s\n", result.Description)
+	}
+
+	printRenderData(ctx.stdout, result.Data)
+	for _, line := range result.Logs {
+		fmt.Fprintf(ctx.stdout, "log: %s\n", line)
+	}
+	return nil
+}
+
+// printRenderData prints each top-level data key: arrays of objects become
+// aligned tables, everything else prints as "key: value".
+func printRenderData(w io.Writer, data map[string]any) {
+	if len(data) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := data[k]
+		if rows, ok := asRowSlice(v); ok {
+			fmt.Fprintf(w, "\n%s:\n", k)
+			printTable(w, rows)
+			continue
+		}
+		fmt.Fprintf(w, "%s: %v\n", k, v)
+	}
+}
+
+// asRowSlice returns v as a slice of object rows if it is a non-empty JSON array
+// whose elements are objects.
+func asRowSlice(v any) ([]map[string]any, bool) {
+	arr, ok := v.([]any)
+	if !ok || len(arr) == 0 {
+		return nil, false
+	}
+	rows := make([]map[string]any, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		rows = append(rows, m)
+	}
+	return rows, true
+}
+
+// printTable prints rows as an aligned text table. Columns are the union of keys
+// across rows, with "id" first when present, then the rest sorted.
+func printTable(w io.Writer, rows []map[string]any) {
+	colSet := map[string]bool{}
+	for _, r := range rows {
+		for k := range r {
+			colSet[k] = true
+		}
+	}
+	cols := make([]string, 0, len(colSet))
+	for k := range colSet {
+		if k != "id" {
+			cols = append(cols, k)
+		}
+	}
+	sort.Strings(cols)
+	if colSet["id"] {
+		cols = append([]string{"id"}, cols...)
+	}
+
+	widths := make([]int, len(cols))
+	for i, c := range cols {
+		widths[i] = len(c)
+	}
+	cells := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		row := make([]string, len(cols))
+		for i, c := range cols {
+			s := ""
+			if val, ok := r[c]; ok && val != nil {
+				s = fmt.Sprintf("%v", val)
+			}
+			row[i] = s
+			if len(s) > widths[i] {
+				widths[i] = len(s)
+			}
+		}
+		cells = append(cells, row)
+	}
+
+	writeRow := func(vals []string) {
+		var b strings.Builder
+		for i, v := range vals {
+			if i > 0 {
+				b.WriteString("  ")
+			}
+			b.WriteString(v)
+			for p := len(v); p < widths[i]; p++ {
+				b.WriteByte(' ')
+			}
+		}
+		fmt.Fprintln(w, strings.TrimRight(b.String(), " "))
+	}
+	writeRow(cols)
+	for _, row := range cells {
+		writeRow(row)
+	}
 }
 
 func uiDelete(ctx *cmdContext) error {

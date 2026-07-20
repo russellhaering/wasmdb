@@ -27,15 +27,15 @@ type SchedulerConfig struct {
 
 // Scheduler runs background agents on their configured schedules.
 type Scheduler struct {
-	store    *Store
-	config   SchedulerConfig
+	store  *Store
+	config SchedulerConfig
 
-	mu       sync.Mutex
-	timers   map[string]*time.Timer // agent name -> timer
-	running  map[string]bool        // agent name -> currently executing
-	cancel   context.CancelFunc
-	ctx      context.Context
-	wg       sync.WaitGroup
+	mu      sync.Mutex
+	timers  map[string]*time.Timer // agent name -> timer
+	running map[string]bool        // agent name -> currently executing
+	cancel  context.CancelFunc
+	ctx     context.Context
+	wg      sync.WaitGroup
 }
 
 // NewScheduler creates a new agent scheduler.
@@ -103,6 +103,30 @@ func (s *Scheduler) RunAgent(ctx context.Context, agentName string) (*AgentRun, 
 	}
 
 	return s.executeAgent(ctx, ag)
+}
+
+// TriggerAgent runs a named agent immediately, but refuses to start it if the
+// same agent is already running (whether from its timer or another trigger).
+// This is the safe entry point for user/LLM-initiated triggers: RunAgent alone
+// does not consult the running set, so a self-trigger (an agent triggering
+// itself) would recurse without this guard. The running flag is cleared when
+// the run completes.
+func (s *Scheduler) TriggerAgent(ctx context.Context, name string) (*AgentRun, error) {
+	s.mu.Lock()
+	if s.running[name] {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("agent %q is already running; refusing reentrant trigger", name)
+	}
+	s.running[name] = true
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.running, name)
+		s.mu.Unlock()
+	}()
+
+	return s.RunAgent(ctx, name)
 }
 
 // reload loads enabled agents and reconciles scheduled timers.
@@ -261,9 +285,9 @@ func (s *Scheduler) executeAgent(ctx context.Context, ag *Agent) (*AgentRun, err
 	durationMS := completedAt.Sub(start).Milliseconds()
 
 	var (
-		status      = "completed"
-		output      string
-		errorMsg    string
+		status       = "completed"
+		output       string
+		errorMsg     string
 		inputTokens  int64
 		outputTokens int64
 	)

@@ -161,10 +161,11 @@ type Backend interface {
 	TriggerAgent(ctx context.Context, name string) (*AgentRunInfo, error)
 	ListAgentRuns(ctx context.Context, name string, limit int) ([]AgentRunInfo, error)
 
-	CreateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*UIConfigInfo, error)
+	CreateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, actionsJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*UIConfigInfo, error)
 	ListUIConfigs(ctx context.Context) ([]UIConfigSummary, error)
 	GetUIConfig(ctx context.Context, name string) (*UIConfigDetail, error)
-	UpdateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*UIConfigInfo, error)
+	UpdateUIConfig(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, actionsJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*UIConfigInfo, error)
+	RenderUIConfig(ctx context.Context, name string, params map[string]string) (*UIRenderResult, error)
 	DeleteUIConfig(ctx context.Context, name string) error
 
 	Health(ctx context.Context) (*HealthStatus, error)
@@ -330,13 +331,25 @@ type UIConfigDetail struct {
 	Description        string   `json:"description,omitempty"`
 	SourceTables       []string `json:"source_tables,omitempty"`
 	SurfaceJSON        string   `json:"surface_json"`
+	ActionsJSON        string   `json:"actions_json,omitempty"`
 	QueryJS            string   `json:"query_js,omitempty"`
 	AutoRefreshSeconds int      `json:"auto_refresh_seconds,omitempty"`
 	SortOrder          int      `json:"sort_order"`
 	Enabled            bool     `json:"enabled"`
+	Generator          string   `json:"generator,omitempty"`
 	CreatedBy          string   `json:"created_by"`
 	CreatedAt          string   `json:"created_at"`
 	UpdatedAt          string   `json:"updated_at"`
+}
+
+// UIRenderResult holds the resolved output of a UI page render.
+type UIRenderResult struct {
+	Title       string         `json:"title,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Data        map[string]any `json:"data,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	ErrorPhase  string         `json:"error_phase,omitempty"`
+	Logs        []string       `json:"logs,omitempty"`
 }
 
 type ChatEvent struct {

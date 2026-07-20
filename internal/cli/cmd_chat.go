@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -76,8 +77,22 @@ func runChat(ctx *cmdContext) error {
 				fmt.Fprintf(ctx.stderr, "\033[31merror: %s\033[0m\n", evt.Error)
 
 			case "done":
-				// Check accumulated text for A2UI blocks and re-render.
 				fullText := textBuf.String()
+				// A completed page reference is a tiny, complete fenced block;
+				// print a notice pointing at /ui instead of dumping the fence.
+				// (The interactive embed lives in the web chat.)
+				if pages := extractSurfaceRefPages(fullText); len(pages) > 0 {
+					base := strings.TrimRight(ctx.serverURL, "/")
+					for _, page := range pages {
+						if base != "" {
+							fmt.Fprintf(ctx.stdout, "\n[ui page %q updated — view at %s/ui]\n", page, base)
+						} else {
+							fmt.Fprintf(ctx.stdout, "\n[ui page %q updated — view at /ui]\n", page)
+						}
+					}
+				}
+				// Check accumulated text for A2UI blocks and re-render (legacy path;
+				// removed in Phase 7).
 				if strings.Contains(fullText, "```a2ui") {
 					// Move cursor up to overwrite streamed text.
 					// Count lines we streamed.
@@ -117,6 +132,37 @@ func runChat(ctx *cmdContext) error {
 		return fmt.Errorf("reading input: %w", err)
 	}
 	return nil
+}
+
+// extractSurfaceRefPages scans completed assistant text for ```surface-ref
+// fenced blocks and returns the "page" value from each. Parsing happens on
+// message completion (the block is small and complete), so no streaming fence
+// parser is needed.
+func extractSurfaceRefPages(text string) []string {
+	const fence = "```surface-ref"
+	var pages []string
+	rest := text
+	for {
+		i := strings.Index(rest, fence)
+		if i < 0 {
+			break
+		}
+		rest = rest[i+len(fence):]
+		end := strings.Index(rest, "```")
+		if end < 0 {
+			break
+		}
+		body := rest[:end]
+		rest = rest[end+3:]
+
+		var ref struct {
+			Page string `json:"page"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &ref); err == nil && ref.Page != "" {
+			pages = append(pages, ref.Page)
+		}
+	}
+	return pages
 }
 
 func newSessionID() string {

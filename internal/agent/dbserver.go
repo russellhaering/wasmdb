@@ -6,13 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/russellhaering/wasmdb/internal/agents"
 	autobotagent "github.com/russellhaering/wasmdb/internal/autobot/agent"
 	"github.com/russellhaering/wasmdb/internal/autobot/mcpx"
-	"github.com/russellhaering/wasmdb/internal/agents"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/functions"
@@ -33,6 +34,15 @@ type TableServerResult struct {
 // SetServerGroup wires the server group into the handler so search_tools works.
 func (r *TableServerResult) SetServerGroup(sg *mcpx.ServerGroup) {
 	r.handler.serverGroup = sg
+}
+
+// SetScheduler wires an agent scheduler into the handler so manage_agent
+// action=trigger can run agents immediately. A nil scheduler is ignored (the
+// trigger action then reports that the scheduler is not running).
+func (r *TableServerResult) SetScheduler(s *agents.Scheduler) {
+	if s != nil {
+		r.handler.scheduler = s
+	}
 }
 
 // NewTableServer creates an MCP server exposing wasmdb table operations as tools.
@@ -159,12 +169,16 @@ func NewTableServer(registry *database.Registry, fnEngine *functions.Engine, fnS
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "manage_agent",
-		Description: "Create, update, get, list, delete, or list runs for background agents. Agents run automatically on a timer schedule.",
+		Description: "Create, update, get, list, delete, list runs (runs), or trigger background agents. Agents run automatically on a timer schedule; action=trigger runs the named agent immediately and returns {run_id, status, summary}.",
 	}, h.manageAgent)
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "manage_ui",
-		Description: "Create, update, get, list, delete, or render dashboard UI pages. Each page has an A2UI surface layout and optional query_js for dynamic data. Pages appear at /ui. Use action=render to test a page and catch errors before publishing.",
+		Name: "manage_ui",
+		Description: "Create, update, get, list, delete, render, or exec_action on database UI pages (shown at /ui). " +
+			"Each page has a Surface component layout, declared actions (insert/update/delete/query), and optional query_js. " +
+			"create/update run the render pipeline and return render_error/render_error_phase/render_logs on failure or data_keys on success. " +
+			"Update is a patch: only the fields you pass are changed. " +
+			"Use action=render to test a page and action=exec_action (with action_name + params) to test an action end-to-end before relying on it.",
 	}, h.manageUI)
 
 	return &TableServerResult{Server: srv, handler: h}
@@ -182,7 +196,17 @@ type dbHandler struct {
 	subAgentModel   string
 	anthropicAPIKey string
 	// serverGroup is set by the chat manager so tools can query it.
-	serverGroup     *mcpx.ServerGroup
+	serverGroup *mcpx.ServerGroup
+	// scheduler runs background agents immediately for manage_agent action=trigger.
+	// It is nil when no agent scheduler is configured (no Anthropic API key).
+	scheduler agentScheduler
+}
+
+// agentScheduler triggers a named background agent run immediately. It is
+// satisfied by *agents.Scheduler; kept as an interface so the handler can be
+// unit-tested with a nil or fake scheduler and so a nil check is meaningful.
+type agentScheduler interface {
+	TriggerAgent(ctx context.Context, name string) (*agents.AgentRun, error)
 }
 
 // --- Tool input types ---
@@ -510,7 +534,7 @@ type oauthInput struct {
 }
 
 type manageAgentInput struct {
-	Action      string `json:"action" jsonschema:"Action: create, update, get, list, delete, or runs"`
+	Action      string `json:"action" jsonschema:"Action: create, update, get, list, delete, runs, or trigger"`
 	Name        string `json:"name,omitempty" jsonschema:"Agent name (required for create, update, get, delete, runs)"`
 	Description string `json:"description,omitempty" jsonschema:"Agent description"`
 	Prompt      string `json:"prompt,omitempty" jsonschema:"Agent prompt/instruction (required for create, update)"`
@@ -522,16 +546,19 @@ type manageAgentInput struct {
 }
 
 type manageUIInput struct {
-	Action             string   `json:"action" jsonschema:"Action: create, update, get, list, delete, or render"`
-	Name               string   `json:"name,omitempty" jsonschema:"UI page name (required for create, update, get, delete)"`
-	Title              string   `json:"title,omitempty" jsonschema:"Display title for the page"`
-	Description        string   `json:"description,omitempty" jsonschema:"Page description"`
-	SourceTables       []string `json:"source_tables,omitempty" jsonschema:"Tables this page reads from"`
-	SurfaceJSON        string   `json:"surface_json,omitempty" jsonschema:"A2UI surface JSON defining the layout (required for create, update)"`
-	QueryJS            string   `json:"query_js,omitempty" jsonschema:"Optional JS code to fetch/transform data. Runs in sandbox with db API."`
-	AutoRefreshSeconds int      `json:"auto_refresh_seconds,omitempty" jsonschema:"Auto-refresh interval in seconds (0 = no auto-refresh)"`
-	SortOrder          int      `json:"sort_order,omitempty" jsonschema:"Sort order for page tabs (lower = first)"`
-	Enabled            *bool    `json:"enabled,omitempty" jsonschema:"Whether page is visible (default true)"`
+	Action             string         `json:"action" jsonschema:"Action: create, update, get, list, delete, render, or exec_action"`
+	Name               string         `json:"name,omitempty" jsonschema:"UI page name (required for create, update, get, delete, render, exec_action)"`
+	Title              string         `json:"title,omitempty" jsonschema:"Display title for the page"`
+	Description        string         `json:"description,omitempty" jsonschema:"Page description"`
+	SourceTables       []string       `json:"source_tables,omitempty" jsonschema:"Tables this page reads from"`
+	SurfaceJSON        string         `json:"surface_json,omitempty" jsonschema:"Surface UI JSON defining the components (required for create)"`
+	ActionsJSON        string         `json:"actions_json,omitempty" jsonschema:"Declared page actions as JSON (insert/update/delete/query). Referenced by Buttons, Forms, and DataTable row_actions."`
+	QueryJS            string         `json:"query_js,omitempty" jsonschema:"Optional JS: define function handler(params) returning an object whose keys are bound via $data. Runs in sandbox with db API."`
+	AutoRefreshSeconds int            `json:"auto_refresh_seconds,omitempty" jsonschema:"Auto-refresh interval in seconds (0 = no auto-refresh)"`
+	SortOrder          int            `json:"sort_order,omitempty" jsonschema:"Sort order for page tabs (lower = first)"`
+	Enabled            *bool          `json:"enabled,omitempty" jsonschema:"Whether page is visible (default true)"`
+	ActionName         string         `json:"action_name,omitempty" jsonschema:"For exec_action: the declared action to execute"`
+	Params             map[string]any `json:"params,omitempty" jsonschema:"For exec_action: params passed to the action (and to query_js for query actions)"`
 }
 
 type searchToolsInput struct {
@@ -1040,8 +1067,25 @@ func (h *dbHandler) manageAgent(ctx context.Context, _ *mcp.CallToolRequest, inp
 		}
 		return jsonResult(runs), nil, nil
 
+	case "trigger":
+		if input.Name == "" {
+			return textError("name is required for trigger"), nil, nil
+		}
+		if h.scheduler == nil {
+			return textError("agent scheduler not running (no Anthropic API key configured); cannot trigger agents"), nil, nil
+		}
+		run, err := h.scheduler.TriggerAgent(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to trigger agent: " + err.Error()), nil, nil
+		}
+		return jsonResult(map[string]any{
+			"run_id":  run.ID,
+			"status":  run.Status,
+			"summary": run.Output,
+		}), nil, nil
+
 	default:
-		return textError("Unknown action: " + input.Action + ". Use create, update, get, list, delete, or runs."), nil, nil
+		return textError("Unknown action: " + input.Action + ". Use create, update, get, list, delete, runs, or trigger."), nil, nil
 	}
 }
 
@@ -1177,55 +1221,56 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
-		cfg, err := h.uiConfigStore.Create(ctx, input.Name, input.Title, input.Description, input.SourceTables, input.SurfaceJSON, "", input.QueryJS, input.AutoRefreshSeconds, input.SortOrder, enabled, "agent", "")
+		cfg, err := h.uiConfigStore.Create(ctx, input.Name, input.Title, input.Description, input.SourceTables, input.SurfaceJSON, input.ActionsJSON, input.QueryJS, input.AutoRefreshSeconds, input.SortOrder, enabled, "agent", "")
 		if err != nil {
 			return textError("Failed to create UI config: " + err.Error()), nil, nil
 		}
 		res := map[string]any{"created": cfg.Name, "id": cfg.ID, "title": cfg.Title}
-		// Auto-validate by rendering.
-		renderResult := uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil)
-		if renderResult.Error != "" {
-			res["render_status"] = "error"
-			res["render_error"] = renderResult.Error
-			res["render_error_phase"] = renderResult.ErrorPhase
-		} else {
-			res["render_status"] = "ok"
-		}
+		// Auto-validate by rendering the full pipeline.
+		addRenderFeedback(res, uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil))
 		return jsonResult(res), nil, nil
 
 	case "update":
-		if input.Name == "" || input.SurfaceJSON == "" {
-			return textError("name and surface_json are required for update"), nil, nil
+		if input.Name == "" {
+			return textError("name is required for update"), nil, nil
 		}
-		enabled := true
-		if input.Enabled != nil {
-			enabled = *input.Enabled
-		}
+		// Patch semantics: only fields actually supplied are changed. generator
+		// always flips to "agent" so the scaffolder never clobbers the page again.
 		gen := "agent"
-		cfg, err := h.uiConfigStore.Update(ctx, input.Name, uiconfig.UpdateParams{
-			Title:              &input.Title,
-			Description:        &input.Description,
-			SourceTables:       &input.SourceTables,
-			SurfaceJSON:        &input.SurfaceJSON,
-			QueryJS:            &input.QueryJS,
-			AutoRefreshSeconds: &input.AutoRefreshSeconds,
-			SortOrder:          &input.SortOrder,
-			Enabled:            &enabled,
-			Generator:          &gen,
-		})
+		params := uiconfig.UpdateParams{Generator: &gen}
+		if input.Title != "" {
+			params.Title = &input.Title
+		}
+		if input.Description != "" {
+			params.Description = &input.Description
+		}
+		if input.SourceTables != nil {
+			params.SourceTables = &input.SourceTables
+		}
+		if input.SurfaceJSON != "" {
+			params.SurfaceJSON = &input.SurfaceJSON
+		}
+		if input.ActionsJSON != "" {
+			params.ActionsJSON = &input.ActionsJSON
+		}
+		if input.QueryJS != "" {
+			params.QueryJS = &input.QueryJS
+		}
+		if input.AutoRefreshSeconds != 0 {
+			params.AutoRefreshSeconds = &input.AutoRefreshSeconds
+		}
+		if input.SortOrder != 0 {
+			params.SortOrder = &input.SortOrder
+		}
+		if input.Enabled != nil {
+			params.Enabled = input.Enabled
+		}
+		cfg, err := h.uiConfigStore.Update(ctx, input.Name, params)
 		if err != nil {
 			return textError("Failed to update UI config: " + err.Error()), nil, nil
 		}
 		res := map[string]any{"updated": cfg.Name, "id": cfg.ID, "title": cfg.Title}
-		// Auto-validate by rendering.
-		renderResult := uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil)
-		if renderResult.Error != "" {
-			res["render_status"] = "error"
-			res["render_error"] = renderResult.Error
-			res["render_error_phase"] = renderResult.ErrorPhase
-		} else {
-			res["render_status"] = "ok"
-		}
+		addRenderFeedback(res, uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil))
 		return jsonResult(res), nil, nil
 
 	case "get":
@@ -1290,21 +1335,51 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if cfg == nil {
 			return textError("UI config not found: " + input.Name), nil, nil
 		}
-		renderResult := uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil)
-		status := "ok"
-		if renderResult.Error != "" {
-			status = "error"
+		res := map[string]any{"page": cfg.Name}
+		addRenderFeedback(res, uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, input.Params))
+		return jsonResult(res), nil, nil
+
+	case "exec_action":
+		if input.Name == "" || input.ActionName == "" {
+			return textError("name and action_name are required for exec_action"), nil, nil
 		}
-		return jsonResult(map[string]any{
-			"status":      status,
-			"error":       renderResult.Error,
-			"error_phase": renderResult.ErrorPhase,
-			"logs":        renderResult.Logs,
-		}), nil, nil
+		cfg, err := h.uiConfigStore.Get(ctx, input.Name)
+		if err != nil {
+			return textError("Failed to get UI config: " + err.Error()), nil, nil
+		}
+		if cfg == nil {
+			return textError("UI config not found: " + input.Name), nil, nil
+		}
+		renderer := uiconfig.NewRenderer(h.registry, h.fnEngine)
+		if !renderer.HasAction(cfg, input.ActionName) {
+			return textError("action not declared on page: " + input.ActionName), nil, nil
+		}
+		result := renderer.ExecuteAction(ctx, cfg, input.ActionName, input.Params)
+		return jsonResult(result), nil, nil
 
 	default:
-		return textError("Unknown action: " + input.Action + ". Valid actions: create, update, get, list, delete, render"), nil, nil
+		return textError("Unknown action: " + input.Action + ". Valid actions: create, update, get, list, delete, render, exec_action"), nil, nil
 	}
+}
+
+// addRenderFeedback annotates an MCP result map with the outcome of a render:
+// render_error/_phase/_logs on failure, or render_status "ok" plus data_keys
+// (sorted top-level keys of the query data) on success.
+func addRenderFeedback(res map[string]any, rr *uiconfig.RenderResult) {
+	if rr.Error != "" {
+		res["render_status"] = "error"
+		res["render_error"] = rr.Error
+		res["render_error_phase"] = rr.ErrorPhase
+		res["render_logs"] = rr.Logs
+		return
+	}
+	res["render_status"] = "ok"
+	keys := make([]string, 0, len(rr.Data))
+	for k := range rr.Data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	res["data_keys"] = keys
 }
 
 func mcpxSingleServerGroup(server *mcp.Server) *mcpx.ServerGroup {
