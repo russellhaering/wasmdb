@@ -11,6 +11,16 @@
   var sessionId = null;
   var inflight = false;
   var queuedMessages = [];
+  var mountedEmbeds = []; // live SurfaceUI controllers embedded in the chat log
+
+  // destroyEmbeds tears down every embedded surface (stopping its /render polling)
+  // before the chat log is cleared.
+  function destroyEmbeds() {
+    for (var i = 0; i < mountedEmbeds.length; i++) {
+      try { mountedEmbeds[i].destroy(); } catch (e) { /* ignore */ }
+    }
+    mountedEmbeds = [];
+  }
 
   document.getElementById('sidebar-toggle').onclick = toggleSidebar;
   document.getElementById('sidebar-overlay').onclick = closeSidebar;
@@ -78,6 +88,7 @@
     sessionId = null;
     queuedMessages = [];
     updateSendButtonState();
+    destroyEmbeds();
     chat.innerHTML = '';
     if (isMobile()) closeSidebar();
     document.querySelectorAll('.session-item').forEach(function (el) { el.classList.remove('active'); });
@@ -92,6 +103,7 @@
     sessionId = id;
     queuedMessages = [];
     updateSendButtonState();
+    destroyEmbeds();
     chat.innerHTML = '';
     if (isMobile()) closeSidebar();
     document.querySelectorAll('.session-item').forEach(function (el) {
@@ -222,20 +234,27 @@
   // page embeds.
   function buildAssistantContent(raw) {
     var frag = document.createDocumentFragment();
-    var re = /```surface-ref[ \t]*\r?\n([\s\S]*?)\r?\n?```/g;
-    var lastIndex = 0;
-    var m;
-    while ((m = re.exec(raw)) !== null) {
-      var before = raw.slice(lastIndex, m.index);
-      if (before.trim()) {
+    var lines = raw.split('\n');
+    var textBuf = [];        // pending ordinary text (rendered via markdown)
+    var refBuf = [];         // content lines of the current surface-ref block
+    var inFence = false;     // inside any fenced code block
+    var fenceIsSurfaceRef = false;
+
+    function flushText() {
+      var text = textBuf.join('\n');
+      if (text.trim()) {
         var md = document.createElement('div');
         md.className = 'text-content md-rendered';
-        md.innerHTML = renderMarkdown(before);
+        md.innerHTML = renderMarkdown(text);
         frag.appendChild(md);
       }
+      textBuf = [];
+    }
+
+    function emitSurfaceRef(content) {
       var pageName = null;
       try {
-        var parsed = JSON.parse(m[1].trim());
+        var parsed = JSON.parse(content.trim());
         if (parsed && typeof parsed.page === 'string') pageName = parsed.page;
       } catch (e) { /* leave pageName null */ }
       if (pageName) {
@@ -244,18 +263,47 @@
         // Malformed surface-ref: fall back to showing the raw block.
         var fb = document.createElement('div');
         fb.className = 'text-content md-rendered';
-        fb.innerHTML = renderMarkdown('```\n' + m[1] + '\n```');
+        fb.innerHTML = renderMarkdown('```\n' + content + '\n```');
         frag.appendChild(fb);
       }
-      lastIndex = re.lastIndex;
     }
-    var tail = raw.slice(lastIndex);
-    if (tail.trim()) {
-      var mdTail = document.createElement('div');
-      mdTail.className = 'text-content md-rendered';
-      mdTail.innerHTML = renderMarkdown(tail);
-      frag.appendChild(mdTail);
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var t = line.trim();
+      if (!inFence) {
+        if (t.indexOf('```') === 0) {
+          inFence = true;
+          fenceIsSurfaceRef = (t.slice(3).trim() === 'surface-ref');
+          if (fenceIsSurfaceRef) {
+            flushText();
+            refBuf = [];
+          } else {
+            // Ordinary fence: keep as text, but track state so a nested
+            // ```surface-ref line inside it is not treated as an embed.
+            textBuf.push(line);
+          }
+          continue;
+        }
+        textBuf.push(line);
+      } else {
+        if (t === '```') {
+          if (fenceIsSurfaceRef) emitSurfaceRef(refBuf.join('\n'));
+          else textBuf.push(line);
+          inFence = false;
+          fenceIsSurfaceRef = false;
+          continue;
+        }
+        if (fenceIsSurfaceRef) refBuf.push(line);
+        else textBuf.push(line);
+      }
     }
+    // Unterminated surface-ref: preserve its content as a plain text fence.
+    if (inFence && fenceIsSurfaceRef) {
+      textBuf.push('```surface-ref');
+      for (var k = 0; k < refBuf.length; k++) textBuf.push(refBuf[k]);
+    }
+    flushText();
     return frag;
   }
 
@@ -269,7 +317,10 @@
     var host = document.createElement('div');
     box.appendChild(host);
     // Mount asynchronously; the host is in the DOM by the time render resolves.
-    SurfaceUI.mount(pageName, host, { onUnauthorized: onUnauthorized });
+    // Track the controller so its /render polling is torn down when the chat
+    // log is cleared (new session / session switch).
+    var controller = SurfaceUI.mount(pageName, host, { onUnauthorized: onUnauthorized });
+    if (controller) mountedEmbeds.push(controller);
     return box;
   }
 
@@ -448,7 +499,13 @@
     var eventType = '';
     function pump() {
       return reader.read().then(function (res) {
-        if (res.done) return;
+        if (res.done) {
+          // Stream ended without a 'done' event (dropped connection): make sure
+          // any buffered assistant text still gets finalized/rendered.
+          // finalizeText is idempotent, so a real 'done' earlier is harmless.
+          finalizeText();
+          return;
+        }
         buffer += decoder.decode(res.value, { stream: true });
         var lines = buffer.split('\n');
         buffer = lines.pop();
@@ -457,7 +514,14 @@
           if (line.startsWith('event: ')) {
             eventType = line.slice(7);
           } else if (line.startsWith('data: ') && eventType) {
-            var data = JSON.parse(line.slice(6));
+            var data;
+            try {
+              data = JSON.parse(line.slice(6));
+            } catch (e) {
+              console.warn('chat: skipping malformed SSE data line', e);
+              eventType = '';
+              continue;
+            }
             if (eventType === 'session' && data.session_id) {
               sessionId = data.session_id;
             } else {

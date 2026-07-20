@@ -93,6 +93,7 @@
     this.debounceTimer = null;
     this.last = null; // { surface, data, actions }
     this.modalOpen = false;
+    this.openOverlay = null; // currently open edit-modal overlay, if any
   }
 
   Session.prototype.api = function (path, body) {
@@ -115,6 +116,8 @@
   Session.prototype.destroy = function () {
     if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null; }
     if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null; }
+    if (this.openOverlay) { this.openOverlay.remove(); this.openOverlay = null; }
+    this.modalOpen = false;
     this.container.innerHTML = '';
   };
 
@@ -171,8 +174,45 @@
     }
   };
 
+  // captureFocus records the focused bound control inside the container (if any)
+  // so it can be restored across a rebuild. Returns null when focus is elsewhere
+  // so we never steal focus from outside the container.
+  Session.prototype.captureFocus = function () {
+    var ae = document.activeElement;
+    if (!ae || !this.container.contains(ae)) return null;
+    if (ae.tagName !== 'INPUT' && ae.tagName !== 'SELECT' && ae.tagName !== 'TEXTAREA') return null;
+    var name = ae.getAttribute && ae.getAttribute('name');
+    if (!name) return null;
+    var state = { name: name };
+    try {
+      if (typeof ae.selectionStart === 'number') {
+        state.selectionStart = ae.selectionStart;
+        state.selectionEnd = ae.selectionEnd;
+      }
+    } catch (e) { /* selection not supported on this input type */ }
+    return state;
+  };
+
+  // restoreFocus re-focuses the control with the same name after a rebuild and
+  // restores the caret/selection when available.
+  Session.prototype.restoreFocus = function (state) {
+    if (!state) return;
+    var nodes = this.container.querySelectorAll('input, select, textarea');
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].getAttribute('name') === state.name) {
+        var n = nodes[i];
+        try { n.focus(); } catch (e) { /* ignore */ }
+        if (typeof state.selectionStart === 'number' && typeof n.setSelectionRange === 'function') {
+          try { n.setSelectionRange(state.selectionStart, state.selectionEnd); } catch (e) { /* ignore */ }
+        }
+        return;
+      }
+    }
+  };
+
   // build renders the current surface tree into the container.
   Session.prototype.build = function () {
+    var focusState = this.captureFocus();
     this.container.innerHTML = '';
     if (!this.last || !this.last.surface) { this.showError('empty surface'); return; }
     var comps = this.last.surface.components || [];
@@ -182,6 +222,7 @@
     if (!root) { this.showError('no root component'); return; }
     var node = this.renderComponent(root, idx);
     if (node) this.container.appendChild(node);
+    this.restoreFocus(focusState);
   };
 
   Session.prototype.renderChildren = function (comp, idx, parent) {
@@ -222,10 +263,12 @@
       }
       case 'Metric': {
         var m = el('div', 'sf-metric');
-        m.appendChild(el('div', 'sf-metric-label', String(p.label != null ? p.label : '')));
+        var mLabel = resolve(p.label, data);
+        m.appendChild(el('div', 'sf-metric-label', String(mLabel != null ? mLabel : '')));
         var valLine = el('div', 'sf-metric-value');
         valLine.appendChild(document.createTextNode(formatCell(resolve(p.value, data))));
-        if (p.unit) valLine.appendChild(el('span', 'sf-metric-unit', String(p.unit)));
+        var mUnit = resolve(p.unit, data);
+        if (mUnit) valLine.appendChild(el('span', 'sf-metric-unit', String(mUnit)));
         m.appendChild(valLine);
         return m;
       }
@@ -324,6 +367,8 @@
 
   Session.prototype.openEditModal = function (ra, row, cols) {
     var self = this;
+    // Remove any previously-open overlay before opening a new one.
+    if (this.openOverlay) { this.openOverlay.remove(); this.openOverlay = null; }
     this.modalOpen = true;
     var overlay = el('div', 'sf-modal-overlay');
     var modal = el('div', 'sf-modal');
@@ -348,11 +393,17 @@
     var actions = el('div', 'sf-modal-actions');
     var save = el('button', 'sf-button', 'Save');
     var cancel = el('button', 'sf-button sf-button-danger', 'Cancel');
-    function close() { self.modalOpen = false; overlay.remove(); }
+    function close() { self.modalOpen = false; overlay.remove(); if (self.openOverlay === overlay) self.openOverlay = null; }
     cancel.onclick = close;
     save.onclick = function () {
       var params = { id: row.id };
-      for (var k in inputs) { if (inputs.hasOwnProperty(k)) params[k] = inputs[k].value(); }
+      for (var k in inputs) {
+        if (!inputs.hasOwnProperty(k)) continue;
+        // Non-scalar values are shown read-only and excluded, so structured data
+        // is never silently overwritten with a stringified copy.
+        if (inputs[k].exclude) continue;
+        params[k] = inputs[k].value();
+      }
       save.disabled = true;
       self.runAction(ra.action, params, null, function (res) {
         if (res && res.ok === false) {
@@ -370,10 +421,20 @@
     overlay.appendChild(modal);
     overlay.onclick = function (e) { if (e.target === overlay) close(); };
     document.body.appendChild(overlay);
+    this.openOverlay = overlay;
   };
 
   // buildTypedControl returns { node, value() } for a typed value.
   Session.prototype.buildTypedControl = function (type, current) {
+    if (current != null && typeof current === 'object') {
+      // Structured (object/array) values can't be edited as a scalar. Show them
+      // read-only as JSON and mark for exclusion from the saved params.
+      var ro = el('input', 'sf-input');
+      ro.type = 'text';
+      ro.readOnly = true;
+      ro.value = JSON.stringify(current);
+      return { node: ro, exclude: true, value: function () { return current; } };
+    }
     if (type === 'bool') {
       var cb = el('input', 'sf-checkbox');
       cb.type = 'checkbox';
@@ -489,22 +550,36 @@
       }
       if (this.params[p.name] != null) sel.value = String(this.params[p.name]);
       ctrl = sel;
+    } else if (p.type === 'bool') {
+      ctrl = el('input', 'sf-checkbox');
+      ctrl.type = 'checkbox';
+      if (this.params[p.name] != null) ctrl.checked = !!this.params[p.name];
     } else {
       ctrl = el('input', 'sf-input');
       ctrl.type = (p.type === 'int' || p.type === 'float') ? 'number' : (p.type === 'datetime' ? 'datetime-local' : 'text');
       if (p.placeholder) ctrl.placeholder = p.placeholder;
       if (this.params[p.name] != null) ctrl.value = String(this.params[p.name]);
     }
+    // Name the control so focus + caret can be restored across debounced rebuilds.
+    if (p.name != null) ctrl.name = String(p.name);
 
     if (bound) {
-      var handler = function () {
-        var raw = (ctrl.type === 'checkbox') ? ctrl.checked : ctrl.value;
-        self.params[p.name] = coerce(raw, p.type);
-        if (self.debounceTimer) clearTimeout(self.debounceTimer);
-        self.debounceTimer = setTimeout(function () { self.refresh(); }, 300);
-      };
-      ctrl.addEventListener('input', handler);
-      ctrl.addEventListener('change', handler);
+      if (ctrl.type === 'checkbox') {
+        // Booleans toggle discretely — refresh immediately, no debounce.
+        ctrl.addEventListener('change', function () {
+          self.params[p.name] = coerce(ctrl.checked, p.type);
+          self.refresh();
+        });
+      } else {
+        var handler = function () {
+          var raw = ctrl.value;
+          self.params[p.name] = coerce(raw, p.type);
+          if (self.debounceTimer) clearTimeout(self.debounceTimer);
+          self.debounceTimer = setTimeout(function () { self.refresh(); }, 300);
+        };
+        ctrl.addEventListener('input', handler);
+        ctrl.addEventListener('change', handler);
+      }
     }
     wrap.appendChild(ctrl);
     return wrap;
@@ -548,9 +623,18 @@
   Session.prototype.runAction = function (actionName, params, srcEl, onDone) {
     var self = this;
     var actionDecl = (this.last.actions && this.last.actions[actionName]) || {};
+    var httpOk = true, httpStatus = 0;
     this.api('/v1/ui/pages/' + encodeURIComponent(this.pageName) + '/actions/' + encodeURIComponent(actionName), { params: params })
-      .then(function (resp) { return resp.json(); })
+      .then(function (resp) {
+        httpOk = resp.ok;
+        httpStatus = resp.status;
+        return resp.json().catch(function () { return {}; });
+      })
       .then(function (res) {
+        // Server error responses (400/404/503, ...) carry {error} without ok.
+        if (!httpOk) {
+          res = { ok: false, error: (res && res.error) || ('HTTP ' + httpStatus) };
+        }
         if (res && res.ok === false) {
           if (onDone) onDone(res);
           else if (srcEl) self.showInlineNear(srcEl, res.error || 'action failed');
@@ -575,9 +659,22 @@
   };
 
   Session.prototype.showInlineNear = function (srcEl, msg) {
-    var errBox = el('div', 'sf-inline-error', msg);
-    if (srcEl && srcEl.parentNode) srcEl.parentNode.appendChild(errBox);
-    else this.showError(msg);
+    if (srcEl && srcEl.parentNode) {
+      var parent = srcEl.parentNode;
+      var errBox = el('div', 'sf-inline-error', msg);
+      // Replace an existing adjacent error rather than stacking duplicates.
+      var existing = null;
+      for (var i = 0; i < parent.children.length; i++) {
+        if (parent.children[i].classList && parent.children[i].classList.contains('sf-inline-error')) {
+          existing = parent.children[i];
+          break;
+        }
+      }
+      if (existing) parent.replaceChild(errBox, existing);
+      else parent.appendChild(errBox);
+    } else {
+      this.showError(msg);
+    }
   };
 
   var SurfaceUI = {
