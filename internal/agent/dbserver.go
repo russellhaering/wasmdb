@@ -1177,14 +1177,14 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
-		cfg, err := h.uiConfigStore.Create(ctx, input.Name, input.Title, input.Description, input.SourceTables, input.SurfaceJSON, input.QueryJS, input.AutoRefreshSeconds, input.SortOrder, enabled, "")
+		cfg, err := h.uiConfigStore.Create(ctx, input.Name, input.Title, input.Description, input.SourceTables, input.SurfaceJSON, "", input.QueryJS, input.AutoRefreshSeconds, input.SortOrder, enabled, "agent", "")
 		if err != nil {
 			return textError("Failed to create UI config: " + err.Error()), nil, nil
 		}
 		res := map[string]any{"created": cfg.Name, "id": cfg.ID, "title": cfg.Title}
 		// Auto-validate by rendering.
-		renderResult := uiconfig.Render(ctx, cfg, h.fnEngine)
-		if renderResult.Status == "error" {
+		renderResult := uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil)
+		if renderResult.Error != "" {
 			res["render_status"] = "error"
 			res["render_error"] = renderResult.Error
 			res["render_error_phase"] = renderResult.ErrorPhase
@@ -1201,14 +1201,25 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
-		cfg, err := h.uiConfigStore.Update(ctx, input.Name, input.Title, input.Description, input.SourceTables, input.SurfaceJSON, input.QueryJS, input.AutoRefreshSeconds, input.SortOrder, enabled)
+		gen := "agent"
+		cfg, err := h.uiConfigStore.Update(ctx, input.Name, uiconfig.UpdateParams{
+			Title:              &input.Title,
+			Description:        &input.Description,
+			SourceTables:       &input.SourceTables,
+			SurfaceJSON:        &input.SurfaceJSON,
+			QueryJS:            &input.QueryJS,
+			AutoRefreshSeconds: &input.AutoRefreshSeconds,
+			SortOrder:          &input.SortOrder,
+			Enabled:            &enabled,
+			Generator:          &gen,
+		})
 		if err != nil {
 			return textError("Failed to update UI config: " + err.Error()), nil, nil
 		}
 		res := map[string]any{"updated": cfg.Name, "id": cfg.ID, "title": cfg.Title}
 		// Auto-validate by rendering.
-		renderResult := uiconfig.Render(ctx, cfg, h.fnEngine)
-		if renderResult.Status == "error" {
+		renderResult := uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil)
+		if renderResult.Error != "" {
 			res["render_status"] = "error"
 			res["render_error"] = renderResult.Error
 			res["render_error_phase"] = renderResult.ErrorPhase
@@ -1279,9 +1290,13 @@ func (h *dbHandler) manageUI(ctx context.Context, _ *mcp.CallToolRequest, input 
 		if cfg == nil {
 			return textError("UI config not found: " + input.Name), nil, nil
 		}
-		renderResult := uiconfig.Render(ctx, cfg, h.fnEngine)
+		renderResult := uiconfig.NewRenderer(h.registry, h.fnEngine).Render(ctx, cfg, nil)
+		status := "ok"
+		if renderResult.Error != "" {
+			status = "error"
+		}
 		return jsonResult(map[string]any{
-			"status":      renderResult.Status,
+			"status":      status,
 			"error":       renderResult.Error,
 			"error_phase": renderResult.ErrorPhase,
 			"logs":        renderResult.Logs,

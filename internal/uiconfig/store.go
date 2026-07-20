@@ -12,6 +12,9 @@ import (
 
 const uiConfigsTable = "_ui_configs"
 
+// currentSpecVersion is the surface format version written by Create.
+const currentSpecVersion = 2
+
 // UIConfig represents a saved UI page configuration.
 type UIConfig struct {
 	ID                 string    `json:"id"`
@@ -20,10 +23,13 @@ type UIConfig struct {
 	Description        string    `json:"description,omitempty"`
 	SourceTables       []string  `json:"source_tables,omitempty"`
 	SurfaceJSON        string    `json:"surface_json"`
+	ActionsJSON        string    `json:"actions_json,omitempty"`
 	QueryJS            string    `json:"query_js,omitempty"`
 	AutoRefreshSeconds int       `json:"auto_refresh_seconds,omitempty"`
 	SortOrder          int       `json:"sort_order"`
 	Enabled            bool      `json:"enabled"`
+	SpecVersion        int       `json:"spec_version"`
+	Generator          string    `json:"generator,omitempty"` // "scaffold" | "agent" | "user"
 	CreatedBy          string    `json:"created_by"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
@@ -39,13 +45,18 @@ func NewStore(registry *database.Registry) *Store {
 	return &Store{registry: registry}
 }
 
-// Create creates a new UI configuration.
-func (s *Store) Create(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool, userID string) (*UIConfig, error) {
+// Create creates a new UI configuration. It always writes spec_version=2 and
+// requires a generator ("scaffold" | "agent" | "user"); an empty generator
+// defaults to "user".
+func (s *Store) Create(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, actionsJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool, generator, userID string) (*UIConfig, error) {
 	if name == "" {
 		return nil, fmt.Errorf("name must not be empty")
 	}
 	if surfaceJSON == "" {
 		return nil, fmt.Errorf("surface_json must not be empty")
+	}
+	if generator == "" {
+		generator = "user"
 	}
 
 	existing, err := s.Get(ctx, name)
@@ -63,26 +74,20 @@ func (s *Store) Create(ctx context.Context, name, title, description string, sou
 
 	now := time.Now().UTC()
 
-	// Convert []string to []any for storage.
-	var sourceTablesAny []any
-	if len(sourceTables) > 0 {
-		sourceTablesAny = make([]any, len(sourceTables))
-		for i, t := range sourceTables {
-			sourceTablesAny[i] = t
-		}
-	}
-
 	doc := &document.Document{
 		Attributes: map[string]any{
 			"name":                 name,
 			"title":                title,
 			"description":          description,
-			"source_tables":        sourceTablesAny,
+			"source_tables":        stringsToAny(sourceTables),
 			"surface_json":         surfaceJSON,
+			"actions_json":         actionsJSON,
 			"query_js":             queryJS,
 			"auto_refresh_seconds": autoRefreshSec,
 			"sort_order":           sortOrder,
 			"enabled":              enabled,
+			"spec_version":         currentSpecVersion,
+			"generator":            generator,
 			"created_by":           userID,
 			"updated_at":           now.Format(time.RFC3339),
 		},
@@ -99,14 +104,123 @@ func (s *Store) Create(ctx context.Context, name, title, description string, sou
 		Description:        description,
 		SourceTables:       sourceTables,
 		SurfaceJSON:        surfaceJSON,
+		ActionsJSON:        actionsJSON,
 		QueryJS:            queryJS,
 		AutoRefreshSeconds: autoRefreshSec,
 		SortOrder:          sortOrder,
 		Enabled:            enabled,
+		SpecVersion:        currentSpecVersion,
+		Generator:          generator,
 		CreatedBy:          userID,
 		CreatedAt:          doc.CreatedAt,
 		UpdatedAt:          now,
 	}, nil
+}
+
+// UpdateParams holds the patchable fields for Update. A nil pointer preserves
+// the existing value; a non-nil pointer overwrites it. To clear a string field,
+// pass a pointer to "".
+type UpdateParams struct {
+	Title              *string
+	Description        *string
+	SurfaceJSON        *string
+	ActionsJSON        *string
+	QueryJS            *string
+	SourceTables       *[]string
+	AutoRefreshSeconds *int
+	SortOrder          *int
+	Enabled            *bool
+	Generator          *string
+}
+
+// Update applies a partial patch to an existing UI configuration. Only fields
+// with a non-nil pointer in params are changed; everything else (including ID,
+// CreatedBy, CreatedAt, and SpecVersion) is preserved. updated_at is bumped.
+func (s *Store) Update(ctx context.Context, name string, params UpdateParams) (*UIConfig, error) {
+	existing, err := s.Get(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, fmt.Errorf("ui config %q not found", name)
+	}
+
+	// Apply the patch onto a copy of the existing config.
+	updated := *existing
+	if params.Title != nil {
+		updated.Title = *params.Title
+	}
+	if params.Description != nil {
+		updated.Description = *params.Description
+	}
+	if params.SurfaceJSON != nil {
+		updated.SurfaceJSON = *params.SurfaceJSON
+	}
+	if params.ActionsJSON != nil {
+		updated.ActionsJSON = *params.ActionsJSON
+	}
+	if params.QueryJS != nil {
+		updated.QueryJS = *params.QueryJS
+	}
+	if params.SourceTables != nil {
+		updated.SourceTables = *params.SourceTables
+	}
+	if params.AutoRefreshSeconds != nil {
+		updated.AutoRefreshSeconds = *params.AutoRefreshSeconds
+	}
+	if params.SortOrder != nil {
+		updated.SortOrder = *params.SortOrder
+	}
+	if params.Enabled != nil {
+		updated.Enabled = *params.Enabled
+	}
+	if params.Generator != nil {
+		updated.Generator = *params.Generator
+	}
+
+	if updated.SurfaceJSON == "" {
+		return nil, fmt.Errorf("surface_json must not be empty")
+	}
+
+	tbl, err := s.registry.GetTable(ctx, uiConfigsTable)
+	if err != nil {
+		return nil, fmt.Errorf("get ui_configs table: %w", err)
+	}
+
+	now := time.Now().UTC()
+	updated.UpdatedAt = now
+
+	doc := &document.Document{
+		ID: existing.ID,
+		Attributes: map[string]any{
+			"name":                 updated.Name,
+			"title":                updated.Title,
+			"description":          updated.Description,
+			"source_tables":        stringsToAny(updated.SourceTables),
+			"surface_json":         updated.SurfaceJSON,
+			"actions_json":         updated.ActionsJSON,
+			"query_js":             updated.QueryJS,
+			"auto_refresh_seconds": updated.AutoRefreshSeconds,
+			"sort_order":           updated.SortOrder,
+			"enabled":              updated.Enabled,
+			"spec_version":         existing.SpecVersion,
+			"generator":            updated.Generator,
+			"created_by":           existing.CreatedBy,
+			"updated_at":           now.Format(time.RFC3339),
+		},
+	}
+
+	if err := tbl.PutDocument(ctx, doc); err != nil {
+		return nil, fmt.Errorf("update ui config: %w", err)
+	}
+
+	return &updated, nil
+}
+
+// SetEnabled toggles a UI configuration's enabled flag.
+func (s *Store) SetEnabled(ctx context.Context, name string, enabled bool) error {
+	_, err := s.Update(ctx, name, UpdateParams{Enabled: &enabled})
+	return err
 }
 
 // Get retrieves a UI configuration by name.
@@ -187,69 +301,6 @@ func (s *Store) ListEnabled(ctx context.Context) ([]*UIConfig, error) {
 	return configs, nil
 }
 
-// Update updates a UI configuration.
-func (s *Store) Update(ctx context.Context, name, title, description string, sourceTables []string, surfaceJSON, queryJS string, autoRefreshSec, sortOrder int, enabled bool) (*UIConfig, error) {
-	if surfaceJSON == "" {
-		return nil, fmt.Errorf("surface_json must not be empty")
-	}
-
-	existing, err := s.Get(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if existing == nil {
-		return nil, fmt.Errorf("ui config %q not found", name)
-	}
-
-	tbl, err := s.registry.GetTable(ctx, uiConfigsTable)
-	if err != nil {
-		return nil, fmt.Errorf("get ui_configs table: %w", err)
-	}
-
-	now := time.Now().UTC()
-
-	// Convert []string to []any for storage.
-	var sourceTablesAny []any
-	if len(sourceTables) > 0 {
-		sourceTablesAny = make([]any, len(sourceTables))
-		for i, t := range sourceTables {
-			sourceTablesAny[i] = t
-		}
-	}
-
-	doc := &document.Document{
-		ID: existing.ID,
-		Attributes: map[string]any{
-			"name":                 name,
-			"title":                title,
-			"description":          description,
-			"source_tables":        sourceTablesAny,
-			"surface_json":         surfaceJSON,
-			"query_js":             queryJS,
-			"auto_refresh_seconds": autoRefreshSec,
-			"sort_order":           sortOrder,
-			"enabled":              enabled,
-			"created_by":           existing.CreatedBy,
-			"updated_at":           now.Format(time.RFC3339),
-		},
-	}
-
-	if err := tbl.PutDocument(ctx, doc); err != nil {
-		return nil, fmt.Errorf("update ui config: %w", err)
-	}
-
-	existing.Title = title
-	existing.Description = description
-	existing.SourceTables = sourceTables
-	existing.SurfaceJSON = surfaceJSON
-	existing.QueryJS = queryJS
-	existing.AutoRefreshSeconds = autoRefreshSec
-	existing.SortOrder = sortOrder
-	existing.Enabled = enabled
-	existing.UpdatedAt = now
-	return existing, nil
-}
-
 // Delete removes a UI configuration by name.
 func (s *Store) Delete(ctx context.Context, name string) error {
 	existing, err := s.Get(ctx, name)
@@ -290,6 +341,9 @@ func docToUIConfig(doc *document.Document) *UIConfig {
 	if v, ok := doc.Attributes["surface_json"].(string); ok {
 		c.SurfaceJSON = v
 	}
+	if v, ok := doc.Attributes["actions_json"].(string); ok {
+		c.ActionsJSON = v
+	}
 	if v, ok := doc.Attributes["query_js"].(string); ok {
 		c.QueryJS = v
 	}
@@ -297,6 +351,10 @@ func docToUIConfig(doc *document.Document) *UIConfig {
 	c.SortOrder = anyToInt(doc.Attributes["sort_order"])
 	if v, ok := doc.Attributes["enabled"].(bool); ok {
 		c.Enabled = v
+	}
+	c.SpecVersion = anyToInt(doc.Attributes["spec_version"])
+	if v, ok := doc.Attributes["generator"].(string); ok {
+		c.Generator = v
 	}
 	if v, ok := doc.Attributes["created_by"].(string); ok {
 		c.CreatedBy = v
@@ -307,6 +365,19 @@ func docToUIConfig(doc *document.Document) *UIConfig {
 		}
 	}
 	return c
+}
+
+// stringsToAny converts a []string to the []any storage representation, or nil
+// when empty.
+func stringsToAny(ss []string) []any {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
 }
 
 func anyToInt(v any) int {

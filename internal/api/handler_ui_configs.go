@@ -46,7 +46,7 @@ func (s *Server) handleCreateUIConfig(w http.ResponseWriter, r *http.Request) {
 		userID = session.UserID
 	}
 
-	cfg, err := s.uiConfigStore.Create(r.Context(), req.Name, req.Title, req.Description, req.SourceTables, req.SurfaceJSON, req.QueryJS, req.AutoRefreshSeconds, req.SortOrder, enabled, userID)
+	cfg, err := s.uiConfigStore.Create(r.Context(), req.Name, req.Title, req.Description, req.SourceTables, req.SurfaceJSON, "", req.QueryJS, req.AutoRefreshSeconds, req.SortOrder, enabled, "user", userID)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
@@ -156,7 +156,16 @@ func (s *Server) handleUpdateUIConfig(w http.ResponseWriter, r *http.Request) {
 		enabled = *req.Enabled
 	}
 
-	cfg, err := s.uiConfigStore.Update(r.Context(), name, req.Title, req.Description, req.SourceTables, req.SurfaceJSON, req.QueryJS, req.AutoRefreshSeconds, req.SortOrder, enabled)
+	cfg, err := s.uiConfigStore.Update(r.Context(), name, uiconfig.UpdateParams{
+		Title:              &req.Title,
+		Description:        &req.Description,
+		SourceTables:       &req.SourceTables,
+		SurfaceJSON:        &req.SurfaceJSON,
+		QueryJS:            &req.QueryJS,
+		AutoRefreshSeconds: &req.AutoRefreshSeconds,
+		SortOrder:          &req.SortOrder,
+		Enabled:            &enabled,
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
@@ -207,6 +216,6 @@ func (s *Server) handleRenderUIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := uiconfig.Render(r.Context(), cfg, s.fnEngine)
+	result := uiconfig.NewRenderer(s.registry, s.fnEngine).Render(r.Context(), cfg, nil)
 	writeJSON(w, http.StatusOK, result)
 }
