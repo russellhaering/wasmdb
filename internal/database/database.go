@@ -32,6 +32,10 @@ type Table struct {
 	db       *lsm.DB
 	cacheDir string
 
+	// registry back-reference, used only to reach the OnWrite hook. May be nil
+	// for tables constructed directly in tests via NewTable.
+	registry *Registry
+
 	// mu protects bleve, vector, attrs, and indexCh during index rebuilds.
 	mu      sync.RWMutex
 	bleve   *index.BleveIndex
@@ -188,7 +192,22 @@ func (d *Table) PutDocument(ctx context.Context, doc *document.Document) error {
 	// Index inline — no need to wait for background builder.
 	d.indexDocument(doc)
 
+	d.fireOnWrite()
+
 	return nil
+}
+
+// fireOnWrite invokes the registry's OnWrite hook for non-system tables. It
+// mirrors the lock-free style of OnSchemaChange: the hook is read without
+// additional locking and must be installed before writes begin. Handlers run
+// inline, so they must be cheap.
+func (d *Table) fireOnWrite() {
+	if d.System || strings.HasPrefix(d.Name, "_") {
+		return
+	}
+	if d.registry != nil && d.registry.OnWrite != nil {
+		d.registry.OnWrite(d.Name)
+	}
 }
 
 // PutDocumentsBulk validates, serializes, and stores multiple documents with a single flush.
@@ -236,6 +255,11 @@ func (d *Table) PutDocumentsBulk(ctx context.Context, docs []*document.Document)
 	// Index inline.
 	for _, doc := range docs {
 		d.indexDocument(doc)
+	}
+
+	// Fire the write hook once for the whole batch.
+	if len(docs) > 0 {
+		d.fireOnWrite()
 	}
 
 	return nil

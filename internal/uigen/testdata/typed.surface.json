@@ -1,0 +1,169 @@
+{
+  "components": [
+    {
+      "id": "root",
+      "type": "Column",
+      "properties": {
+        "gap": 16
+      },
+      "children": [
+        "main",
+        "add"
+      ]
+    },
+    {
+      "id": "main",
+      "type": "Card",
+      "properties": {
+        "title": "Orders"
+      },
+      "children": [
+        "summary",
+        "table"
+      ]
+    },
+    {
+      "id": "summary",
+      "type": "Row",
+      "properties": {
+        "align": "end",
+        "gap": 12
+      },
+      "children": [
+        "metric",
+        "search"
+      ]
+    },
+    {
+      "id": "metric",
+      "type": "Metric",
+      "properties": {
+        "label": "Total shown",
+        "value": {
+          "$data": "count"
+        }
+      }
+    },
+    {
+      "id": "search",
+      "type": "Input",
+      "properties": {
+        "bind": true,
+        "label": "Search",
+        "name": "q",
+        "placeholder": "Search orders…",
+        "type": "string"
+      }
+    },
+    {
+      "id": "table",
+      "type": "DataTable",
+      "properties": {
+        "columns": [
+          {
+            "key": "id",
+            "label": "ID"
+          },
+          {
+            "key": "customer",
+            "label": "Customer",
+            "type": "string"
+          },
+          {
+            "key": "quantity",
+            "label": "Quantity",
+            "type": "int"
+          },
+          {
+            "key": "total",
+            "label": "Total",
+            "type": "float"
+          },
+          {
+            "key": "paid",
+            "label": "Paid",
+            "type": "bool"
+          },
+          {
+            "key": "created",
+            "label": "Created",
+            "type": "datetime"
+          },
+          {
+            "key": "tags",
+            "label": "Tags",
+            "type": "string"
+          },
+          {
+            "key": "owner",
+            "label": "Owner",
+            "type": "string"
+          }
+        ],
+        "empty_text": "No documents yet.",
+        "row_actions": [
+          {
+            "action": "update_row",
+            "label": "Edit"
+          },
+          {
+            "action": "delete_row",
+            "confirm": true,
+            "label": "Delete"
+          }
+        ],
+        "rows": {
+          "$data": "rows"
+        }
+      }
+    },
+    {
+      "id": "add",
+      "type": "Card",
+      "properties": {
+        "title": "Add Order"
+      },
+      "children": [
+        "form"
+      ]
+    },
+    {
+      "id": "form",
+      "type": "Form",
+      "properties": {
+        "fields": [
+          {
+            "label": "Customer",
+            "name": "customer",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "label": "Quantity",
+            "name": "quantity",
+            "type": "int"
+          },
+          {
+            "label": "Total",
+            "name": "total",
+            "type": "float"
+          },
+          {
+            "label": "Paid",
+            "name": "paid",
+            "type": "bool"
+          },
+          {
+            "label": "Created",
+            "name": "created",
+            "type": "datetime"
+          }
+        ],
+        "submit": {
+          "action": "create",
+          "label": "Add Order"
+        }
+      }
+    }
+  ]
+}

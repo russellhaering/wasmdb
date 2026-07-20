@@ -1,0 +1,148 @@
+{
+  "components": [
+    {
+      "id": "root",
+      "type": "Column",
+      "properties": {
+        "gap": 16
+      },
+      "children": [
+        "main",
+        "add"
+      ]
+    },
+    {
+      "id": "main",
+      "type": "Card",
+      "properties": {
+        "title": "Posts"
+      },
+      "children": [
+        "summary",
+        "table"
+      ]
+    },
+    {
+      "id": "summary",
+      "type": "Row",
+      "properties": {
+        "align": "end",
+        "gap": 12
+      },
+      "children": [
+        "metric",
+        "search"
+      ]
+    },
+    {
+      "id": "metric",
+      "type": "Metric",
+      "properties": {
+        "label": "Total shown",
+        "value": {
+          "$data": "count"
+        }
+      }
+    },
+    {
+      "id": "search",
+      "type": "Input",
+      "properties": {
+        "bind": true,
+        "label": "Search",
+        "name": "q",
+        "placeholder": "Search posts…",
+        "type": "string"
+      }
+    },
+    {
+      "id": "table",
+      "type": "DataTable",
+      "properties": {
+        "columns": [
+          {
+            "key": "id",
+            "label": "ID"
+          },
+          {
+            "key": "title",
+            "label": "Title",
+            "type": "string"
+          },
+          {
+            "key": "views",
+            "label": "Views",
+            "type": "int"
+          },
+          {
+            "key": "published",
+            "label": "Published",
+            "type": "bool"
+          },
+          {
+            "key": "when",
+            "label": "When",
+            "type": "datetime"
+          }
+        ],
+        "empty_text": "No documents yet.",
+        "row_actions": [
+          {
+            "action": "update_row",
+            "label": "Edit"
+          },
+          {
+            "action": "delete_row",
+            "confirm": true,
+            "label": "Delete"
+          }
+        ],
+        "rows": {
+          "$data": "rows"
+        }
+      }
+    },
+    {
+      "id": "add",
+      "type": "Card",
+      "properties": {
+        "title": "Add Post"
+      },
+      "children": [
+        "form"
+      ]
+    },
+    {
+      "id": "form",
+      "type": "Form",
+      "properties": {
+        "fields": [
+          {
+            "label": "Title",
+            "name": "title",
+            "type": "string"
+          },
+          {
+            "label": "Views",
+            "name": "views",
+            "type": "int"
+          },
+          {
+            "label": "Published",
+            "name": "published",
+            "type": "bool"
+          },
+          {
+            "label": "When",
+            "name": "when",
+            "type": "datetime"
+          }
+        ],
+        "submit": {
+          "action": "create",
+          "label": "Add Post"
+        }
+      }
+    }
+  ]
+}

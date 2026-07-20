@@ -44,6 +44,14 @@ type Registry struct {
 
 	// OnSchemaChange is called after tables are created, deleted, or schemas are updated.
 	OnSchemaChange func(ctx context.Context)
+
+	// OnWrite is called (nil-guarded) after a successful document write to a
+	// non-system table, with the table's name. It fires once per PutDocument and
+	// once per PutDocumentsBulk. Like OnSchemaChange it is settable after
+	// construction and read without additional locking, so it must be installed
+	// before writes begin. Handlers are invoked inline on the write path and must
+	// be cheap (dispatch to a debounced/async worker rather than blocking).
+	OnWrite func(tableName string)
 }
 
 // RegistryConfig configures the registry.
@@ -263,7 +271,7 @@ func (r *Registry) openTable(ctx context.Context, name string, schema *document.
 		return nil, fmt.Errorf("open lsm for %q: %w", name, err)
 	}
 
-	return NewTable(TableConfig{
+	tbl, err := NewTable(TableConfig{
 		Name:     name,
 		System:   system,
 		Schema:   schema,
@@ -271,6 +279,12 @@ func (r *Registry) openTable(ctx context.Context, name string, schema *document.
 		CacheDir: r.cacheDir,
 		Embedder: r.embedder,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Back-reference so the table can invoke the registry's OnWrite hook.
+	tbl.registry = r
+	return tbl, nil
 }
 
 // EnsureSystemTables creates any system tables that don't already exist.

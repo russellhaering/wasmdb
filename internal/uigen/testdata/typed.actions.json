@@ -1,0 +1,21 @@
+{
+  "create": {
+    "type": "insert",
+    "table": "orders"
+  },
+  "delete_row": {
+    "type": "delete",
+    "table": "orders",
+    "confirm": true
+  },
+  "search": {
+    "type": "query",
+    "params": [
+      "q"
+    ]
+  },
+  "update_row": {
+    "type": "update",
+    "table": "orders"
+  }
+}

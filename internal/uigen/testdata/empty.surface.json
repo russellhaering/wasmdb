@@ -1,0 +1,62 @@
+{
+  "components": [
+    {
+      "id": "root",
+      "type": "Column",
+      "properties": {
+        "gap": 16
+      },
+      "children": [
+        "main"
+      ]
+    },
+    {
+      "id": "main",
+      "type": "Card",
+      "properties": {
+        "title": "Notes"
+      },
+      "children": [
+        "summary",
+        "table"
+      ]
+    },
+    {
+      "id": "summary",
+      "type": "Row",
+      "properties": {
+        "align": "end",
+        "gap": 12
+      },
+      "children": [
+        "metric"
+      ]
+    },
+    {
+      "id": "metric",
+      "type": "Metric",
+      "properties": {
+        "label": "Total shown",
+        "value": {
+          "$data": "count"
+        }
+      }
+    },
+    {
+      "id": "table",
+      "type": "DataTable",
+      "properties": {
+        "columns": [
+          {
+            "key": "id",
+            "label": "ID"
+          }
+        ],
+        "empty_text": "No documents yet. Add data to this table and the page will gain columns and a form.",
+        "rows": {
+          "$data": "rows"
+        }
+      }
+    }
+  ]
+}
