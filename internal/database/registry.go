@@ -1,6 +1,7 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -312,19 +313,29 @@ func (r *Registry) openTable(ctx context.Context, name string, schema *document.
 	return tbl, nil
 }
 
-// EnsureSystemTables creates any system tables that don't already exist.
-// It is idempotent — existing tables are skipped.
+// EnsureSystemTables creates any system tables that don't already exist and
+// reconciles the schema of existing ones, so deployments pick up new system
+// fields (e.g. columns added to _ui_configs) without manual migration.
+// It is idempotent.
 func (r *Registry) EnsureSystemTables(ctx context.Context, defs []SystemTableDef) error {
 	for _, def := range defs {
 		r.mu.Lock()
-		if _, ok := r.tables[def.Name]; ok {
-			r.mu.Unlock()
+		_, open := r.tables[def.Name]
+		r.mu.Unlock()
+
+		exists := open
+		if !exists {
+			exists, _ = r.store.Exists(ctx, r.metaPath(def.Name))
+		}
+		if exists {
+			if err := r.reconcileSystemTableSchema(ctx, def); err != nil {
+				return fmt.Errorf("reconcile system table %q schema: %w", def.Name, err)
+			}
 			continue
 		}
 
-		// Check if metadata already exists in object store.
-		exists, _ := r.store.Exists(ctx, r.metaPath(def.Name))
-		if exists {
+		r.mu.Lock()
+		if _, ok := r.tables[def.Name]; ok {
 			r.mu.Unlock()
 			continue
 		}
@@ -360,6 +371,53 @@ func (r *Registry) EnsureSystemTables(ctx context.Context, defs []SystemTableDef
 
 		// r.mu is released above before firing (consistent with CreateTable).
 		r.fireSchemaChange(ctx)
+	}
+	return nil
+}
+
+// reconcileSystemTableSchema updates an existing system table whose stored
+// schema differs from the current definition. Index rebuilds are handled by
+// RebuildIndexes; metadata keeps its System flag and creation time.
+func (r *Registry) reconcileSystemTableSchema(ctx context.Context, def SystemTableDef) error {
+	data, err := r.store.Get(ctx, r.metaPath(def.Name))
+	if err != nil {
+		return fmt.Errorf("load metadata: %w", err)
+	}
+	var meta TableMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return fmt.Errorf("parse metadata: %w", err)
+	}
+
+	oldJSON, err := json.Marshal(meta.Schema)
+	if err != nil {
+		return err
+	}
+	newJSON, err := json.Marshal(def.Schema)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(oldJSON, newJSON) {
+		return nil
+	}
+
+	slog.Info("system table schema changed, updating", "name", def.Name)
+
+	tbl, err := r.GetTable(ctx, def.Name)
+	if err != nil {
+		return err
+	}
+	if err := tbl.RebuildIndexes(ctx, meta.Schema, def.Schema); err != nil {
+		return fmt.Errorf("rebuild indexes: %w", err)
+	}
+
+	meta.Schema = def.Schema
+	meta.System = true
+	updated, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	if err := r.store.Put(ctx, r.metaPath(def.Name), updated, false); err != nil {
+		return fmt.Errorf("save metadata: %w", err)
 	}
 	return nil
 }

@@ -389,3 +389,75 @@ func TestIsSystemTable(t *testing.T) {
 func dbName(i int) string {
 	return "db-" + string(rune('a'+i))
 }
+
+// TestEnsureSystemTablesReconcilesSchema reproduces the deployment-migration
+// case: a system table created with an old schema must accept documents using
+// fields added to its definition by a later release.
+func TestEnsureSystemTablesReconcilesSchema(t *testing.T) {
+	reg := newTestRegistry(t)
+	defer reg.Close()
+	ctx := context.Background()
+
+	oldDef := SystemTableDef{
+		Name: "_widgets",
+		Schema: &document.Schema{
+			Fields: []document.FieldDefinition{
+				{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
+			},
+		},
+	}
+	if err := reg.EnsureSystemTables(ctx, []SystemTableDef{oldDef}); err != nil {
+		t.Fatalf("ensure v1: %v", err)
+	}
+
+	tbl, err := reg.GetTable(ctx, "_widgets")
+	if err != nil {
+		t.Fatalf("get table: %v", err)
+	}
+	if err := tbl.PutDocument(ctx, &document.Document{
+		Attributes: map[string]any{"name": "a", "generator": "scaffold"},
+	}); err == nil {
+		t.Fatal("expected unknown-field rejection under v1 schema")
+	}
+
+	newDef := oldDef
+	newDef.Schema = &document.Schema{
+		Fields: []document.FieldDefinition{
+			{Name: "name", Type: document.FieldTypeString, Required: true, Indexed: true},
+			{Name: "generator", Type: document.FieldTypeString, Indexed: true},
+			{Name: "spec_version", Type: document.FieldTypeInt, Indexed: true},
+		},
+	}
+	if err := reg.EnsureSystemTables(ctx, []SystemTableDef{newDef}); err != nil {
+		t.Fatalf("ensure v2: %v", err)
+	}
+
+	if err := tbl.PutDocument(ctx, &document.Document{
+		Attributes: map[string]any{"name": "b", "generator": "scaffold", "spec_version": 2},
+	}); err != nil {
+		t.Fatalf("write with new fields after reconcile: %v", err)
+	}
+
+	// Metadata must keep the System flag and the new schema must survive a
+	// registry restart (fresh in-memory state over the same store).
+	sys, err := reg.IsSystemTable(ctx, "_widgets")
+	if err != nil || !sys {
+		t.Fatalf("system flag lost after reconcile: sys=%v err=%v", sys, err)
+	}
+	reg2 := NewRegistry(RegistryConfig{Store: reg.store, Prefix: "test", CacheDir: t.TempDir()})
+	defer reg2.Close()
+	tbl2, err := reg2.GetTable(ctx, "_widgets")
+	if err != nil {
+		t.Fatalf("reopen table: %v", err)
+	}
+	if err := tbl2.PutDocument(ctx, &document.Document{
+		Attributes: map[string]any{"name": "c", "spec_version": 2},
+	}); err != nil {
+		t.Fatalf("write after reopen: %v", err)
+	}
+
+	// Idempotent: a second ensure with the same def is a no-op.
+	if err := reg2.EnsureSystemTables(ctx, []SystemTableDef{newDef}); err != nil {
+		t.Fatalf("ensure idempotent: %v", err)
+	}
+}
