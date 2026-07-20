@@ -1,7 +1,14 @@
 # Test artifacts
 internal/api/checkpoints/
 internal/api/bleve/
+internal/functions/checkpoints/
 
 # Binaries
 /wasmdb
 /bench
+/wasmdb-cli
+
+# Local runtime state
+.env
+/cache/
+/wasmdb.db
