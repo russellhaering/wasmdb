@@ -233,6 +233,57 @@ func TestSweepDisablesLegacyPages(t *testing.T) {
 	}
 }
 
+// TestSweepReplacesLegacyPageAtScaffoldName seeds a legacy (spec_version=1) page
+// whose name collides with the scaffold name (tbl-orders) and a non-scaffold
+// generator. The old behavior skipped it, leaving the table with no v2 coverage.
+// After the fix, sweep deletes the legacy page and recreates a fresh v2 enabled
+// scaffold page in its place.
+func TestSweepReplacesLegacyPageAtScaffoldName(t *testing.T) {
+	ctx, reg, store, _, gen := newTestGen(t)
+	createTable(t, ctx, reg, "orders", ordersSchema())
+
+	uiTbl, err := reg.GetTable(ctx, "_ui_configs")
+	if err != nil {
+		t.Fatalf("get _ui_configs table: %v", err)
+	}
+	// Legacy page occupying the scaffold name with a non-scaffold generator.
+	legacy := &document.Document{Attributes: map[string]any{
+		"name":          "tbl-orders",
+		"title":         "Legacy Orders",
+		"source_tables": []any{"orders"},
+		"surface_json":  `{"components":[{"id":"root","type":"Text","properties":{"value":"legacy"}}]}`,
+		"enabled":       true,
+		"spec_version":  1,
+		"generator":     "agent",
+		"created_by":    "seed",
+		"updated_at":    "2026-01-01T00:00:00Z",
+	}}
+	if err := uiTbl.PutDocument(ctx, legacy); err != nil {
+		t.Fatalf("seed legacy scaffold-name page: %v", err)
+	}
+	waitGet(t, ctx, store, "tbl-orders")
+
+	res, err := gen.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if !contains(res.Created, "tbl-orders") {
+		t.Fatalf("expected tbl-orders recreated as scaffold, got created=%v", res.Created)
+	}
+
+	scaffold := waitGet(t, ctx, store, "tbl-orders")
+	if scaffold == nil {
+		t.Fatal("tbl-orders missing after sweep")
+	}
+	if scaffold.Generator != GeneratorScaffold || scaffold.SpecVersion != currentSpecVersion || !scaffold.Enabled {
+		t.Fatalf("tbl-orders not a fresh v2 scaffold: generator=%q spec=%d enabled=%v",
+			scaffold.Generator, scaffold.SpecVersion, scaffold.Enabled)
+	}
+	if strings.Contains(scaffold.SurfaceJSON, "legacy") {
+		t.Fatalf("tbl-orders still holds legacy surface: %s", scaffold.SurfaceJSON)
+	}
+}
+
 func contains(ss []string, s string) bool {
 	for _, x := range ss {
 		if x == s {

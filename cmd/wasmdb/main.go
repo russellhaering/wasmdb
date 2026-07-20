@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -185,8 +186,16 @@ func main() {
 		// to bound LLM cost; failures are logged, never fatal.
 		sched := scheduler
 		sweeper.OnNewPages = func(created []string) {
-			if _, err := sched.RunAgent(context.Background(), "ui-builder"); err != nil {
-				slog.Error("uigen: ui-builder chaining failed", "created", created, "err", err)
+			// TriggerAgent (not RunAgent) so the scheduler's reentrancy guard
+			// applies: rapid successive sweeps must not stack concurrent
+			// ui-builder runs. A refusal because it is already running is expected
+			// and logged at info; other failures are logged as errors.
+			if _, err := sched.TriggerAgent(context.Background(), "ui-builder"); err != nil {
+				if errors.Is(err, agents.ErrAgentAlreadyRunning) {
+					slog.Info("uigen: ui-builder already running, skipping chained run", "created", created)
+				} else {
+					slog.Error("uigen: ui-builder chaining failed", "created", created, "err", err)
+				}
 			}
 		}
 	}
@@ -205,12 +214,20 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		slog.Info("shutting down", "signal", sig)
+
+		// Stop accepting new requests first, draining in-flight ones with a fresh
+		// timeout context (the main ctx is about to be canceled). Only then stop
+		// the background workers and cancel the root context.
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("server shutdown error", "err", err)
+		}
 		sweeper.Stop()
 		if scheduler != nil {
 			scheduler.Stop()
 		}
 		cancel()
-		srv.Shutdown(ctx)
 	}()
 
 	if err := srv.Start(); err != nil && err != http.ErrServerClosed {

@@ -86,6 +86,18 @@ func (g *Generator) Sweep(ctx context.Context) (*SweepResult, error) {
 		pageName := pagePrefix + tableName
 		cur, ok := byName[pageName]
 
+		// A legacy page (any generator) occupying the scaffold name but not on
+		// surface format v2 cannot be served or patch-updated by the v2 pipeline.
+		// Delete it and fall through to recreate a fresh v2 scaffold so the table
+		// regains coverage instead of being skipped forever.
+		if ok && cur.SpecVersion != currentSpecVersion {
+			if err := g.store.Delete(ctx, pageName); err != nil {
+				return nil, fmt.Errorf("uigen: delete legacy scaffold-name page %q: %w", pageName, err)
+			}
+			delete(byName, pageName)
+			cur, ok = nil, false
+		}
+
 		if ok && cur.Generator != GeneratorScaffold {
 			result.Skipped = append(result.Skipped, pageName)
 			continue

@@ -42,7 +42,10 @@ type Registry struct {
 	memTableMaxSize int64
 	l0CompactThresh int
 
-	// OnSchemaChange is called after tables are created, deleted, or schemas are updated.
+	// OnSchemaChange is called after tables are created, deleted, or schemas are
+	// updated. It is called without the registry lock held; implementations must
+	// still be fast and must not block (dispatch to a debounced/async worker
+	// rather than doing heavy work inline).
 	OnSchemaChange func(ctx context.Context)
 
 	// OnWrite is called (nil-guarded) after a successful document write to a
@@ -87,6 +90,18 @@ func (r *Registry) dbPrefix(name string) string {
 
 // CreateTable creates a new table.
 func (r *Registry) CreateTable(ctx context.Context, name string, schema *document.Schema) (*Table, error) {
+	db, err := r.createTableLocked(ctx, name, schema)
+	if err != nil {
+		return nil, err
+	}
+	// Fire the schema-change callback AFTER releasing r.mu so a callback that
+	// re-enters the registry (e.g. GetTable) cannot deadlock.
+	r.fireSchemaChange(ctx)
+	return db, nil
+}
+
+// createTableLocked performs the table creation while holding r.mu.
+func (r *Registry) createTableLocked(ctx context.Context, name string, schema *document.Schema) (*Table, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -123,11 +138,15 @@ func (r *Registry) CreateTable(ctx context.Context, name string, schema *documen
 	r.tables[name] = db
 	slog.Info("table created", "name", name)
 
+	return db, nil
+}
+
+// fireSchemaChange invokes the OnSchemaChange callback if set. It must be
+// called without r.mu held.
+func (r *Registry) fireSchemaChange(ctx context.Context) {
 	if r.OnSchemaChange != nil {
 		r.OnSchemaChange(ctx)
 	}
-
-	return db, nil
 }
 
 // GetTable returns an open table, lazily opening it if needed.
@@ -169,6 +188,16 @@ func (r *Registry) GetTable(ctx context.Context, name string) (*Table, error) {
 
 // DeleteTable deletes a table, its metadata, and all stored data.
 func (r *Registry) DeleteTable(ctx context.Context, name string) error {
+	if err := r.deleteTableLocked(ctx, name); err != nil {
+		return err
+	}
+	// Fire the schema-change callback AFTER releasing r.mu (see CreateTable).
+	r.fireSchemaChange(ctx)
+	return nil
+}
+
+// deleteTableLocked performs the table deletion while holding r.mu.
+func (r *Registry) deleteTableLocked(ctx context.Context, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -190,10 +219,6 @@ func (r *Registry) DeleteTable(ctx context.Context, name string) error {
 	}
 
 	slog.Info("table deleted", "name", name, "objects_removed", len(keys))
-
-	if r.OnSchemaChange != nil {
-		r.OnSchemaChange(ctx)
-	}
 
 	return nil
 }
@@ -250,9 +275,9 @@ func (r *Registry) UpdateSchema(ctx context.Context, name string, schema *docume
 		return err
 	}
 
-	if r.OnSchemaChange != nil {
-		r.OnSchemaChange(ctx)
-	}
+	// UpdateSchema does not hold r.mu here (GetTable released it), so firing is
+	// already lock-free; use the shared helper for consistency.
+	r.fireSchemaChange(ctx)
 
 	return nil
 }
@@ -333,9 +358,8 @@ func (r *Registry) EnsureSystemTables(ctx context.Context, defs []SystemTableDef
 
 		slog.Info("system table created", "name", def.Name)
 
-		if r.OnSchemaChange != nil {
-			r.OnSchemaChange(ctx)
-		}
+		// r.mu is released above before firing (consistent with CreateTable).
+		r.fireSchemaChange(ctx)
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ Vertical layout container. Stacks its children top to bottom. May have children.
 
 | Property | Type | Required | $data | Description |
 |---|---|---|---|---|
-| `gap` | int | no | no | Spacing between children. |
+| `gap` | int | no | no | Spacing between children (0-256). |
 | `align` | enum(start|center|end) | no | no | Cross-axis alignment of children. |
 
 ### Row
@@ -30,7 +30,7 @@ Horizontal layout container. Places its children left to right. May have childre
 
 | Property | Type | Required | $data | Description |
 |---|---|---|---|---|
-| `gap` | int | no | no | Spacing between children. |
+| `gap` | int | no | no | Spacing between children (0-256). |
 | `align` | enum(start|center|end) | no | no | Cross-axis alignment of children. |
 
 ### Card

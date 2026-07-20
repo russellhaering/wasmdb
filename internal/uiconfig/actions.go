@@ -142,6 +142,16 @@ func (r *Renderer) executeDelete(ctx context.Context, action surface.Action, par
 		return actionError("delete requires a non-empty string %q param", "id")
 	}
 
+	// Confirm the document exists first: DeleteDocument is a no-op for a missing
+	// id, which would otherwise report ok:true for a nonexistent document.
+	existing, err := tbl.GetDocument(ctx, id)
+	if err != nil {
+		return actionError("delete failed: %s", err.Error())
+	}
+	if existing == nil {
+		return actionError("delete failed: document %q not found", id)
+	}
+
 	if err := tbl.DeleteDocument(ctx, id); err != nil {
 		return actionError("delete failed: %s", err.Error())
 	}

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -13,6 +14,11 @@ import (
 	"github.com/russellhaering/wasmdb/internal/functions"
 	"github.com/russellhaering/wasmdb/internal/mcpservers"
 )
+
+// ErrAgentAlreadyRunning is returned by TriggerAgent when the named agent is
+// already executing, so callers can distinguish an expected reentrancy refusal
+// from a real failure and log it accordingly.
+var ErrAgentAlreadyRunning = errors.New("agent is already running; refusing reentrant trigger")
 
 // SchedulerConfig holds configuration for the agent scheduler.
 type SchedulerConfig struct {
@@ -115,7 +121,7 @@ func (s *Scheduler) TriggerAgent(ctx context.Context, name string) (*AgentRun, e
 	s.mu.Lock()
 	if s.running[name] {
 		s.mu.Unlock()
-		return nil, fmt.Errorf("agent %q is already running; refusing reentrant trigger", name)
+		return nil, fmt.Errorf("agent %q: %w", name, ErrAgentAlreadyRunning)
 	}
 	s.running[name] = true
 	s.mu.Unlock()

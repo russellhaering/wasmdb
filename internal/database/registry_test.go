@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/storage/objstore"
@@ -195,6 +196,50 @@ func TestRegistryDeleteThenCreate(t *testing.T) {
 	_, err := reg.CreateTable(ctx, "recycle", nil)
 	if err != nil {
 		t.Fatalf("CreateTable after delete: %v", err)
+	}
+}
+
+// TestOnSchemaChangeReentrantNoDeadlock verifies the OnSchemaChange callback
+// fires without the registry lock held, so a callback that re-enters the
+// registry (here, GetTable on the just-created table) does not deadlock.
+func TestOnSchemaChangeReentrantNoDeadlock(t *testing.T) {
+	reg := newTestRegistry(t)
+	defer reg.Close()
+
+	ctx := context.Background()
+
+	reg.OnSchemaChange = func(cbCtx context.Context) {
+		// Re-enter the registry from within the callback. This would deadlock if
+		// the callback fired while r.mu was still held by CreateTable/DeleteTable.
+		reg.GetTable(cbCtx, "reentrant")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := reg.CreateTable(ctx, "reentrant", nil)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("CreateTable: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CreateTable deadlocked: OnSchemaChange re-entered the registry under the lock")
+	}
+
+	// DeleteTable must be safe too.
+	go func() {
+		done <- reg.DeleteTable(ctx, "reentrant")
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("DeleteTable: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DeleteTable deadlocked in OnSchemaChange")
 	}
 }
 

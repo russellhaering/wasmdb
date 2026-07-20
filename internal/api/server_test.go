@@ -328,6 +328,43 @@ func TestAuthRejectsWrongToken(t *testing.T) {
 	}
 }
 
+// TestAuthTraversalViaAssetsPrefixDenied verifies that an encoded-traversal path
+// which decodes to escape the /ui/assets/ prefix into an API route does NOT skip
+// authentication. It must be rejected (404 for the ".." segment), never 200.
+func TestAuthTraversalViaAssetsPrefixDenied(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/ui/assets/%2e%2e/v1/tables", nil)
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code == 200 {
+		t.Fatalf("encoded traversal via assets prefix skipped auth: got 200 body=%s", w.Body.String())
+	}
+	if w.Code != 401 && w.Code != 404 {
+		t.Fatalf("expected 401 or 404 for encoded traversal, got %d", w.Code)
+	}
+}
+
+// TestRequestBodyTooLargeRejected verifies an oversized request body is rejected
+// with a clean 4xx (not a 500 or OOM) by the MaxBytesReader in the middleware.
+func TestRequestBodyTooLargeRejected(t *testing.T) {
+	srv, token := setupTestServer(t)
+
+	big := bytes.Repeat([]byte("a"), 9<<20) // 9MB, over the 8MB limit
+	body, _ := json.Marshal(map[string]any{
+		"name":         "big",
+		"surface_json": string(big),
+	})
+
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, token, "POST", "/v1/ui/pages", body))
+
+	if w.Code < 400 || w.Code >= 500 {
+		t.Fatalf("expected 4xx for oversized body, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAuthAllowsHealthChecksWithoutToken(t *testing.T) {
 	srv, _ := setupTestServer(t)
 

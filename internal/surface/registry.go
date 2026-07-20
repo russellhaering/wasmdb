@@ -36,6 +36,10 @@ type propSpec struct {
 	AllowData bool // a $data ref is accepted in place of a concrete value
 	Enum      []string
 	Desc      string
+	// HasRange, when true, bounds a kindInt value to [Min, Max] inclusive.
+	HasRange bool
+	Min      int
+	Max      int
 }
 
 // componentDef is the definition of one component type. The registry of these
@@ -53,7 +57,7 @@ type componentDef struct {
 
 func layoutProps() []propSpec {
 	return []propSpec{
-		{Name: "gap", Kind: kindInt, TypeDesc: "int", Desc: "Spacing between children."},
+		{Name: "gap", Kind: kindInt, TypeDesc: "int", HasRange: true, Min: 0, Max: 256, Desc: "Spacing between children (0-256)."},
 		{Name: "align", Kind: kindEnum, TypeDesc: "enum(start|center|end)", Enum: []string{"start", "center", "end"}, Desc: "Cross-axis alignment of children."},
 	}
 }

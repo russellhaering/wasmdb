@@ -136,6 +136,8 @@ func TestInvalidComponents(t *testing.T) {
 		// Wrong types.
 		{"Text value wrong type", `{"id":"x","type":"Text","properties":{"value":42}}`, "", `property "value" must be a string`},
 		{"Column gap wrong type", `{"id":"x","type":"Column","properties":{"gap":"big"}}`, "", `property "gap" must be an integer`},
+		{"Column gap too large", `{"id":"x","type":"Column","properties":{"gap":1000}}`, "", `property "gap" must be between 0 and 256`},
+		{"Column gap negative", `{"id":"x","type":"Column","properties":{"gap":-1}}`, "", `property "gap" must be between 0 and 256`},
 		{"Metric value wrong type", `{"id":"x","type":"Metric","properties":{"label":"L","value":true}}`, "", `property "value" must be a string or number`},
 		{"Button confirm wrong type", `{"id":"x","type":"Button","properties":{"label":"L","action":"a","confirm":"yes"}}`, `{"a":{"type":"query"}}`, `property "confirm" must be a boolean`},
 
@@ -152,6 +154,7 @@ func TestInvalidComponents(t *testing.T) {
 		{"DataTable column missing key", `{"id":"x","type":"DataTable","properties":{"columns":[{"label":"A"}],"rows":[]}}`, "", `columns[0] missing required field "key"`},
 		{"DataTable bad column type", `{"id":"x","type":"DataTable","properties":{"columns":[{"key":"a","label":"A","type":"json"}],"rows":[]}}`, "", "columns[0].type must be one of"},
 		{"DataTable empty columns", `{"id":"x","type":"DataTable","properties":{"columns":[],"rows":[]}}`, "", `property "columns" must not be empty`},
+		{"DataTable duplicate column key", `{"id":"x","type":"DataTable","properties":{"columns":[{"key":"a","label":"A"},{"key":"a","label":"B"}],"rows":[]}}`, "", `columns[1] has duplicate key "a"`},
 		{"Form select field no options", `{"id":"x","type":"Form","properties":{"fields":[{"name":"f","label":"F","type":"select"}],"submit":{"action":"i","label":"S"}}}`, `{"i":{"type":"insert","table":"t"}}`, `fields[0] is type select but missing required field "options"`},
 		{"Form duplicate field names", `{"id":"x","type":"Form","properties":{"fields":[{"name":"f","label":"A","type":"string"},{"name":"f","label":"B","type":"string"}],"submit":{"action":"i","label":"S"}}}`, `{"i":{"type":"insert","table":"t"}}`, `duplicate name "f"`},
 
@@ -301,6 +304,15 @@ func TestDataRefs(t *testing.T) {
 		err := Validate(s, a, data)
 		if err == nil || !strings.Contains(err.Error(), "did not resolve to an array") {
 			t.Fatalf("expected non-array error, got: %v", err)
+		}
+	})
+
+	t.Run("rows ref element not an object", func(t *testing.T) {
+		s, a := parse(t, wrap(dataTable), "")
+		data := map[string]any{"orders": []any{map[string]any{"a": 1}, "not-an-object"}}
+		err := Validate(s, a, data)
+		if err == nil || !strings.Contains(err.Error(), `element 1 must be an object`) {
+			t.Fatalf("expected element-type error naming index 1, got: %v", err)
 		}
 	})
 

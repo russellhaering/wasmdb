@@ -161,7 +161,7 @@ func (v *validator) validateProp(c *Component, ps propSpec, val any) {
 	case kindString:
 		v.expectString(c, ps.Name, val)
 	case kindInt:
-		v.expectInt(c, ps.Name, val)
+		v.expectInt(c, ps, val)
 	case kindStringOrNumber:
 		if _, ok := val.(string); ok {
 			return
@@ -200,9 +200,16 @@ func (v *validator) expectString(c *Component, name string, val any) {
 	}
 }
 
-func (v *validator) expectInt(c *Component, name string, val any) {
+func (v *validator) expectInt(c *Component, ps propSpec, val any) {
 	if !isInteger(val) {
-		v.add(c, "property %q must be an integer", name)
+		v.add(c, "property %q must be an integer", ps.Name)
+		return
+	}
+	if ps.HasRange {
+		n := intValue(val)
+		if n < ps.Min || n > ps.Max {
+			v.add(c, "property %q must be between %d and %d", ps.Name, ps.Min, ps.Max)
+		}
 	}
 }
 
@@ -249,8 +256,17 @@ func (v *validator) checkDataPath(c *Component, name, path string, requireArray 
 		return
 	}
 	if requireArray {
-		if _, isArr := resolved.([]any); !isArr {
+		arr, isArr := resolved.([]any)
+		if !isArr {
 			v.add(c, "property %q $data path %q did not resolve to an array", name, path)
+			return
+		}
+		// A non-empty array must hold objects (rows), so downstream rendering can
+		// key columns by field. Report the first offending element index.
+		for i, e := range arr {
+			if _, ok := e.(map[string]any); !ok {
+				v.add(c, "property %q $data path %q element %d must be an object", name, path, i)
+			}
 		}
 	}
 }
@@ -300,6 +316,7 @@ func (v *validator) checkColumns(c *Component, val any) {
 	if len(arr) == 0 {
 		v.add(c, "property %q must not be empty", "columns")
 	}
+	seen := make(map[string]bool)
 	for i, e := range arr {
 		m, ok := e.(map[string]any)
 		if !ok {
@@ -307,6 +324,12 @@ func (v *validator) checkColumns(c *Component, val any) {
 			continue
 		}
 		requireStringField(v, c, fmt.Sprintf("columns[%d]", i), m, "key")
+		if key, ok := m["key"].(string); ok && key != "" {
+			if seen[key] {
+				v.add(c, "columns[%d] has duplicate key %q", i, key)
+			}
+			seen[key] = true
+		}
 		requireStringField(v, c, fmt.Sprintf("columns[%d]", i), m, "label")
 		if t, present := m["type"]; present {
 			ts, ok := t.(string)
@@ -550,6 +573,24 @@ func isNumber(v any) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// intValue converts a value already known to satisfy isInteger to an int.
+func intValue(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	default:
+		return 0
 	}
 }
 

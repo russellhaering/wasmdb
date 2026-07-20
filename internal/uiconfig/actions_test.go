@@ -135,6 +135,21 @@ func TestExecuteDeleteMissingIDParam(t *testing.T) {
 	}
 }
 
+func TestExecuteDeleteMissingDoc(t *testing.T) {
+	ctx, reg, store, renderer := newTestEnv(t)
+	createTable(t, ctx, reg, "items", nil)
+	cfg, _ := store.Create(ctx, "p", "", "", nil, minimalSurface,
+		`{"del":{"type":"delete","table":"items"}}`, "", 0, 0, true, "user", "")
+
+	res := renderer.ExecuteAction(ctx, cfg, "del", map[string]any{"id": "does-not-exist"})
+	if res.OK {
+		t.Fatal("expected delete of nonexistent doc to fail, got ok:true")
+	}
+	if !strings.Contains(res.Error, "not found") {
+		t.Errorf("expected 'not found' error, got %q", res.Error)
+	}
+}
+
 func TestExecuteQueryFiltersDeclaredParams(t *testing.T) {
 	ctx, _, store, renderer := newTestEnv(t)
 	// Echo params so we can observe which ones survived filtering.

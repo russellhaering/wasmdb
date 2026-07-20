@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -23,6 +24,10 @@ import (
 type sessionContextKeyType struct{}
 
 var sessionContextKey = sessionContextKeyType{}
+
+// maxRequestBodyBytes caps the size of any request body the server will read,
+// guarding against memory exhaustion from oversized or malicious payloads.
+const maxRequestBodyBytes = 8 << 20 // 8MB
 
 // SessionFromContext returns the session attached to the request context, if any.
 func SessionFromContext(ctx context.Context) *auth.Session {
@@ -186,6 +191,13 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Request-ID", reqID)
 
+		// Cap request body size for all requests to guard against OOM. A decode
+		// past the limit fails with "http: request body too large", which handlers
+		// surface as a 400.
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+
 		// Panic recovery.
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -199,15 +211,27 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}()
 
+		// Reject any request whose decoded path contains ".." segments. r.URL.Path
+		// is already percent-decoded, so this catches traversal encoded as %2e%2e
+		// that would otherwise skip the auth allowlist below or escape an asset
+		// root. Defense in depth: the embedded FS also contains such reads today.
+		if containsDotDot(r.URL.Path) {
+			writeError(w, ErrNotFound)
+			return
+		}
+
 		// Auth — skip for health checks, login, CLI login page, the unauth UI
 		// shells, and the embedded frontend assets. The pages themselves
-		// authenticate their API calls via the wasmdb_session cookie.
+		// authenticate their API calls via the wasmdb_session cookie. The
+		// allowlist is matched against the cleaned path so an encoded-traversal
+		// request cannot use the assets prefix to skip authentication.
+		cleanPath := path.Clean(r.URL.Path)
 		switch {
-		case r.URL.Path == "/healthz", r.URL.Path == "/readyz", r.URL.Path == "/v1/auth/login",
-			r.URL.Path == "/auth/cli-login", r.URL.Path == "/chat", r.URL.Path == "/ui",
-			r.URL.Path == "/v1/auth/device-login", r.URL.Path == "/v1/auth/device-login/poll",
-			r.URL.Path == "/v1/auth/device-login/complete",
-			strings.HasPrefix(r.URL.Path, "/ui/assets/"):
+		case cleanPath == "/healthz", cleanPath == "/readyz", cleanPath == "/v1/auth/login",
+			cleanPath == "/auth/cli-login", cleanPath == "/chat", cleanPath == "/ui",
+			cleanPath == "/v1/auth/device-login", cleanPath == "/v1/auth/device-login/poll",
+			cleanPath == "/v1/auth/device-login/complete",
+			strings.HasPrefix(cleanPath, "/ui/assets/"):
 			// No auth required.
 		default:
 			session, err := s.authenticateRequest(r)
@@ -231,6 +255,20 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			"duration", time.Since(start).String(),
 		)
 	})
+}
+
+// containsDotDot reports whether the (already percent-decoded) path has any
+// ".." segment.
+func containsDotDot(p string) bool {
+	if !strings.Contains(p, "..") {
+		return false
+	}
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 type statusWriter struct {

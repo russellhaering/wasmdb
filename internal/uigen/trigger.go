@@ -27,6 +27,12 @@ type Sweeper struct {
 	// LLM cost. Set once before triggers begin; read without locking.
 	OnNewPages func(created []string)
 
+	// rootCtx governs background (Kick-driven) sweeps. rootCancel is invoked by
+	// Stop before wg.Wait so an in-flight sweep can abort rather than block
+	// shutdown. SweepNow uses the caller's ctx instead.
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
+
 	mu       sync.Mutex
 	timer    *time.Timer // debounce timer; nil when idle
 	running  bool        // a sweep is currently executing
@@ -54,12 +60,15 @@ func newSweeper(sweep func(context.Context) (*SweepResult, error), delay time.Du
 	if delay <= 0 {
 		delay = 5 * time.Second
 	}
+	rootCtx, rootCancel := context.WithCancel(context.Background())
 	s := &Sweeper{
-		sweep:  sweep,
-		delay:  delay,
-		logger: logger,
-		wakeCh: make(chan struct{}, 1),
-		stopCh: make(chan struct{}),
+		sweep:      sweep,
+		delay:      delay,
+		logger:     logger,
+		rootCtx:    rootCtx,
+		rootCancel: rootCancel,
+		wakeCh:     make(chan struct{}, 1),
+		stopCh:     make(chan struct{}),
 	}
 	s.wg.Add(1)
 	go s.run()
@@ -142,7 +151,7 @@ func (s *Sweeper) drain() {
 
 // sweepOnce performs one synchronous sweep and logs/dispatches its result.
 func (s *Sweeper) sweepOnce(reason string) {
-	res, err := s.sweep(context.Background())
+	res, err := s.sweep(s.rootCtx)
 	if err != nil {
 		s.logger.Error("uigen: scaffold sweep failed", "reason", reason, "err", err)
 		return
@@ -194,6 +203,9 @@ func (s *Sweeper) Stop() {
 	}
 	s.mu.Unlock()
 
+	// Cancel the root context BEFORE waiting so an in-flight background sweep can
+	// abort instead of blocking shutdown.
+	s.rootCancel()
 	close(s.stopCh)
 	s.wg.Wait()
 }
