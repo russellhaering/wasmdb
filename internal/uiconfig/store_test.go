@@ -70,6 +70,29 @@ func TestStoreCreateGetListDelete(t *testing.T) {
 	}
 }
 
+// TestStoreGetImmediatelyAfterCreate proves the read-after-write fallback: Get
+// must resolve a freshly created page even before the attribute index catches up.
+func TestStoreGetImmediatelyAfterCreate(t *testing.T) {
+	ctx, _, store, _ := newTestEnv(t)
+
+	created, err := store.Create(ctx, "fresh", "Fresh", "", nil, minimalSurface, "", "", 0, 0, true, "user", "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// No wait/poll: the fallback scan must find it synchronously.
+	got, err := store.Get(ctx, "fresh")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected get-immediately-after-create to succeed, got nil")
+	}
+	if got.ID != created.ID || got.Name != "fresh" || got.Title != "Fresh" {
+		t.Errorf("roundtrip mismatch: %+v", got)
+	}
+}
+
 func TestStoreCreateDefaultGenerator(t *testing.T) {
 	ctx, _, store, _ := newTestEnv(t)
 	cfg, err := store.Create(ctx, "p", "", "", nil, minimalSurface, "", "", 0, 0, true, "scaffold", "")

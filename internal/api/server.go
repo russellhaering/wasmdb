@@ -45,6 +45,7 @@ type Server struct {
 	agentStore      *agents.Store
 	agentScheduler  *agents.Scheduler
 	uiConfigStore   *uiconfig.Store
+	uiRenderer      *uiconfig.Renderer
 }
 
 // ServerConfig configures the API server.
@@ -73,6 +74,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		mcpServerStore: mcpservers.NewStore(cfg.Registry),
 		agentStore:     agentStore,
 		uiConfigStore:  uiconfig.NewStore(cfg.Registry),
+		uiRenderer:     uiconfig.NewRenderer(cfg.Registry, fnEngine),
 	}
 
 	gqlHandler, err := graphqlapi.NewHandler(ctx, cfg.Registry)

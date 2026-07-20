@@ -86,13 +86,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/mcp-servers/{name}", s.handleUpdateMCPServer)
 	mux.HandleFunc("DELETE /v1/mcp-servers/{name}", s.handleDeleteMCPServer)
 
-	// UI Configs.
-	mux.HandleFunc("POST /v1/ui-configs", s.handleCreateUIConfig)
-	mux.HandleFunc("GET /v1/ui-configs", s.handleListUIConfigs)
-	mux.HandleFunc("GET /v1/ui-configs/{name}", s.handleGetUIConfig)
-	mux.HandleFunc("PUT /v1/ui-configs/{name}", s.handleUpdateUIConfig)
-	mux.HandleFunc("DELETE /v1/ui-configs/{name}", s.handleDeleteUIConfig)
-	mux.HandleFunc("POST /v1/ui-configs/{name}/render", s.handleRenderUIConfig)
+	// UI Pages.
+	mux.HandleFunc("POST /v1/ui/pages", s.handleCreateUIPage)
+	mux.HandleFunc("GET /v1/ui/pages", s.handleListUIPages)
+	mux.HandleFunc("GET /v1/ui/pages/{name}", s.handleGetUIPage)
+	mux.HandleFunc("PATCH /v1/ui/pages/{name}", s.handleUpdateUIPage)
+	mux.HandleFunc("DELETE /v1/ui/pages/{name}", s.handleDeleteUIPage)
+	mux.HandleFunc("POST /v1/ui/pages/{name}/render", s.handleRenderUIPage)
+	mux.HandleFunc("POST /v1/ui/pages/{name}/actions/{action}", s.handleUIPageAction)
 
 	// Agents.
 	mux.HandleFunc("POST /v1/agents", s.handleCreateAgent)

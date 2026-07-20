@@ -343,8 +343,8 @@ async function loadDashboard() {
   const main = document.getElementById('main-content');
   main.innerHTML = '<div class="loading" id="loading">loading</div>';
   try {
-    const resp = await apiFetch('/v1/ui-configs');
-    if (!resp.ok) throw new Error('failed to load ui configs');
+    const resp = await apiFetch('/v1/ui/pages');
+    if (!resp.ok) throw new Error('failed to load ui pages');
     const all = await resp.json();
     pages = all.filter(p => p.enabled).sort((a, b) => a.sort_order - b.sort_order);
     if (pages.length === 0) {
@@ -399,7 +399,7 @@ async function selectPage(name) {
 
 async function renderPage(name, container) {
   try {
-    var resp = await apiFetch('/v1/ui-configs/' + encodeURIComponent(name) + '/render', { method: 'POST' });
+    var resp = await apiFetch('/v1/ui/pages/' + encodeURIComponent(name) + '/render', { method: 'POST' });
     if (!resp.ok) {
       var err = await resp.json().catch(function() { return {}; });
       throw new Error(err.error || 'render failed');

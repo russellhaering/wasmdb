@@ -23,6 +23,18 @@ func actionError(format string, args ...any) *ActionResult {
 	return &ActionResult{OK: false, Error: fmt.Sprintf(format, args...)}
 }
 
+// HasAction reports whether the page declares an action with the given name. It
+// lets callers (e.g. the HTTP API) distinguish an undeclared action (a bad
+// request) from a data-level execution failure before invoking ExecuteAction.
+func (r *Renderer) HasAction(cfg *UIConfig, actionName string) bool {
+	actions, err := surface.ParseActions([]byte(cfg.ActionsJSON))
+	if err != nil {
+		return false
+	}
+	_, ok := actions[actionName]
+	return ok
+}
+
 // ExecuteAction runs a single declared action against the page's data model.
 // Insert, update, and delete write to the action's table through the normal
 // registry write paths (schema validation applies; system tables are rejected).

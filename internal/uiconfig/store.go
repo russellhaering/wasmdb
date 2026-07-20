@@ -236,11 +236,32 @@ func (s *Store) Get(ctx context.Context, name string) (*UIConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("search ui config: %w", err)
 	}
-	if len(docs) == 0 {
-		return nil, nil
+	if len(docs) > 0 {
+		return docToUIConfig(docs[0]), nil
 	}
 
-	return docToUIConfig(docs[0]), nil
+	// The attribute index is populated asynchronously, so a read immediately
+	// after a write can miss. Fall back to a paged full-table scan comparing the
+	// "name" attribute so get-after-create is consistent.
+	const scanPage = 200
+	afterKey := ""
+	for {
+		batch, hasMore, err := tbl.ListDocuments(ctx, scanPage, afterKey)
+		if err != nil {
+			return nil, fmt.Errorf("scan ui configs: %w", err)
+		}
+		for _, doc := range batch {
+			if n, ok := doc.Attributes["name"].(string); ok && n == name {
+				return docToUIConfig(doc), nil
+			}
+		}
+		if !hasMore || len(batch) == 0 {
+			break
+		}
+		afterKey = batch[len(batch)-1].ID
+	}
+
+	return nil, nil
 }
 
 // GetByID retrieves a UI configuration by ID.

@@ -721,7 +721,7 @@ func (c *Client) CreateUIConfig(ctx context.Context, name, title, description st
 	}{Name: name, Title: title, Description: description, SourceTables: sourceTables, SurfaceJSON: surfaceJSON, QueryJS: queryJS, AutoRefreshSeconds: autoRefreshSec, SortOrder: sortOrder, Enabled: enabled}
 
 	var resp cli.UIConfigInfo
-	if err := c.do(ctx, http.MethodPost, "/v1/ui-configs", body, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/v1/ui/pages", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -729,7 +729,7 @@ func (c *Client) CreateUIConfig(ctx context.Context, name, title, description st
 
 func (c *Client) ListUIConfigs(ctx context.Context) ([]cli.UIConfigSummary, error) {
 	var resp []cli.UIConfigSummary
-	if err := c.do(ctx, http.MethodGet, "/v1/ui-configs", nil, &resp); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/ui/pages", nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -737,7 +737,7 @@ func (c *Client) ListUIConfigs(ctx context.Context) ([]cli.UIConfigSummary, erro
 
 func (c *Client) GetUIConfig(ctx context.Context, name string) (*cli.UIConfigDetail, error) {
 	var resp cli.UIConfigDetail
-	if err := c.do(ctx, http.MethodGet, "/v1/ui-configs/"+name, nil, &resp); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/ui/pages/"+name, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -756,12 +756,12 @@ func (c *Client) UpdateUIConfig(ctx context.Context, name, title, description st
 	}{Title: title, Description: description, SourceTables: sourceTables, SurfaceJSON: surfaceJSON, QueryJS: queryJS, AutoRefreshSeconds: autoRefreshSec, SortOrder: sortOrder, Enabled: enabled}
 
 	var resp cli.UIConfigInfo
-	if err := c.do(ctx, http.MethodPut, "/v1/ui-configs/"+name, body, &resp); err != nil {
+	if err := c.do(ctx, http.MethodPatch, "/v1/ui/pages/"+name, body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
 func (c *Client) DeleteUIConfig(ctx context.Context, name string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/ui-configs/"+name, nil, nil)
+	return c.do(ctx, http.MethodDelete, "/v1/ui/pages/"+name, nil, nil)
 }
