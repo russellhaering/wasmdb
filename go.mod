@@ -8,7 +8,7 @@ require (
 	github.com/graphql-go/graphql v0.8.1
 	github.com/modelcontextprotocol/go-sdk v1.3.1
 	github.com/oklog/ulid/v2 v2.1.1
-	github.com/russellhaering/moraine v0.0.0-20260720211347-30fd5bbcd70b
+	github.com/russellhaering/moraine v0.0.0-20260720235237-1aaf13bc9f4e
 	golang.org/x/crypto v0.48.0
 )
 
