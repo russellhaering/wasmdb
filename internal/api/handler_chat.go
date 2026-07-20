@@ -63,31 +63,23 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	// The splitter intercepts text deltas, detects ```a2ui fences,
-	// and emits plain text as "text" events and A2UI JSON as "artifact" events.
-	var splitter a2uiSplitter
-
-	// Flush splitter chunks as SSE events.
-	flushChunks := func(chunks []a2uiChunk) {
-		for _, c := range chunks {
-			if c.Artifact != "" {
-				d, _ := json.Marshal(map[string]string{"json": c.Artifact})
-				sendSSE("artifact", d)
-			} else if c.Text != "" {
-				d, _ := json.Marshal(map[string]string{"text": c.Text})
-				sendSSE("text", d)
-			}
+	// Text deltas stream directly as "text" events. Surface pages are embedded
+	// by reference (```surface-ref fences the client parses on completion), so
+	// there is no server-side artifact splitting anymore.
+	sendText := func(text string) {
+		if text == "" {
+			return
 		}
+		d, _ := json.Marshal(map[string]string{"text": text})
+		sendSSE("text", d)
 	}
 
 	for evt := range events {
 		switch evt.Type {
 		case autobotagent.EventTextDelta:
-			flushChunks(splitter.Write(evt.Text))
+			sendText(evt.Text)
 
 		case autobotagent.EventToolCallStart:
-			// Flush any buffered text before tool calls.
-			flushChunks(splitter.Flush())
 			d := map[string]any{
 				"tool": evt.ToolName,
 				"id":   evt.ToolID,
@@ -116,11 +108,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sendSSE("tool_result", data)
 
 		case autobotagent.EventDone:
-			flushChunks(splitter.Flush())
 			sendSSE("done", []byte("{}"))
 
 		case autobotagent.EventError:
-			flushChunks(splitter.Flush())
 			errMsg := "unknown error"
 			if evt.Error != nil {
 				errMsg = evt.Error.Error()

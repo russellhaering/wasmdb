@@ -65,8 +65,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Chat.
 	mux.HandleFunc("GET /chat", s.handleChatUI)
 
-	// Dashboard UI.
+	// Dashboard UI + shared embedded frontend assets.
 	mux.HandleFunc("GET /ui", s.handleDashboardUI)
+	mux.HandleFunc("GET /ui/assets/{file...}", s.handleUIAsset)
 	mux.HandleFunc("POST /v1/chat", s.handleChatStream)
 	mux.HandleFunc("GET /v1/chat/sessions", s.handleListChatSessions)
 	mux.HandleFunc("DELETE /v1/chat/sessions/{id}", s.handleDeleteChatSession)

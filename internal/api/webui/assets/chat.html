@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WasmDB</title>
+<link rel="stylesheet" href="/ui/assets/shared.css">
+</head>
+<body class="chat">
+<header>
+  <button id="sidebar-toggle">≡</button>
+  <div class="left">
+    <span class="title">wasmdb</span>
+    <span class="sep">|</span>
+    <span class="label">chat</span>
+  </div>
+  <nav>
+    <a href="/ui">dashboard</a>
+    <a href="/chat" class="active">chat</a>
+  </nav>
+</header>
+
+<div id="main-container">
+  <div id="sidebar-overlay"></div>
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span>sessions</span>
+      <button id="new-chat-btn">+ new</button>
+    </div>
+    <div id="session-list"></div>
+  </div>
+  <div id="chat-area">
+    <div id="chat"></div>
+    <div id="input-area">
+      <span class="prompt-char">$</span>
+      <textarea id="msg" placeholder="ask about your databases..." rows="1"></textarea>
+      <button id="send">send</button>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/assets/auth.js"></script>
+<script src="/ui/assets/surface.js"></script>
+<script src="/ui/assets/chat.js"></script>
+</body>
+</html>

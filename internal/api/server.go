@@ -195,10 +195,15 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}()
 
-		// Auth — skip for health checks, login, and CLI login page.
-		switch r.URL.Path {
-		case "/healthz", "/readyz", "/v1/auth/login", "/auth/cli-login", "/chat", "/ui",
-			"/v1/auth/device-login", "/v1/auth/device-login/poll", "/v1/auth/device-login/complete":
+		// Auth — skip for health checks, login, CLI login page, the unauth UI
+		// shells, and the embedded frontend assets. The pages themselves
+		// authenticate their API calls via the wasmdb_session cookie.
+		switch {
+		case r.URL.Path == "/healthz", r.URL.Path == "/readyz", r.URL.Path == "/v1/auth/login",
+			r.URL.Path == "/auth/cli-login", r.URL.Path == "/chat", r.URL.Path == "/ui",
+			r.URL.Path == "/v1/auth/device-login", r.URL.Path == "/v1/auth/device-login/poll",
+			r.URL.Path == "/v1/auth/device-login/complete",
+			strings.HasPrefix(r.URL.Path, "/ui/assets/"):
 			// No auth required.
 		default:
 			session, err := s.authenticateRequest(r)
