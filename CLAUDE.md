@@ -110,10 +110,11 @@ wasmdb mcp list                          # list registered MCP servers
 wasmdb mcp get srv                       # get MCP server details
 wasmdb mcp update srv --transport stdio --command cmd  # update MCP server
 wasmdb mcp delete srv                    # delete MCP server
-wasmdb ui create mypage --surface-file s.json --title "My Page"  # create UI page
+wasmdb ui create mypage --surface-file s.json --actions-file a.json --title "My Page"  # create UI page
 wasmdb ui list                           # list UI pages
-wasmdb ui get mypage                     # get UI page details
-wasmdb ui update mypage --surface-file s.json  # update UI page
+wasmdb ui get mypage                     # get UI page details (incl. surface/actions/query)
+wasmdb ui update mypage --surface-file s.json --actions-file a.json  # update UI page (partial patch)
+wasmdb ui render mypage --param q=foo    # server-render a page: resolved {data} as a table
 wasmdb ui delete mypage                  # delete UI page
 wasmdb agent create myagent --prompt "..." --schedule 1h  # create background agent
 wasmdb agent list                        # list background agents
@@ -132,3 +133,40 @@ wasmdb chat                              # interactive chat
 ```
 
 Add `--json` to any command for JSON output.
+
+## UI Pages
+
+WasmDB auto-generates an interactive, data-aware UI. For every non-system table a
+deterministic pure-Go generator (`internal/uigen`) emits a scaffold page named
+`tbl-<table>`: a live `DataTable`, a create `Form` derived from the schema (or
+inferred from sampled documents for schemaless tables), edit/delete row actions,
+and a search box when a field is full-text indexed. No LLM or API key is required,
+so the UI is populated on day one. Scaffolding runs on a startup sweep, on schema
+change (debounced), and on first write to a previously empty table.
+
+**Surface format v2 (`internal/surface`)** — a flat, typed component list
+(`Column`/`Row`/`Card`/`Text`/`Metric`/`DataTable`/`Form`/`Input`/`Button`/…) with
+strict per-type validation. Data binds structurally via `{"$data":"path"}` refs
+resolved against the `query_js` result (no string templating). Write behavior lives
+in page-level **actions** (`insert`/`update`/`delete`/`query`); components may only
+reference declared actions, and the executor validates params against the action
+declaration and the table schema before touching the database (system tables are
+rejected). `surface.SpecMarkdown()` is the single source of truth for the LLM spec.
+
+**Endpoints** (all session-authenticated):
+
+- `GET/POST /v1/ui/pages`, `GET/PATCH/DELETE /v1/ui/pages/{name}` (PATCH = partial patch)
+- `POST /v1/ui/pages/{name}/render` — body `{params?}` → `{surface, data, actions, logs}`
+- `POST /v1/ui/pages/{name}/actions/{action}` — body `{params}` → `{ok, result?, data?}`
+
+The browser renderer is a single embedded `surface.js` (served from
+`/ui/assets/*`), used both by the dashboard at `/ui` and by chat embeds. In chat,
+the agent emits a ```surface-ref``` fence (`{"page":"<name>"}`) that mounts a live
+embed of the stored page; the CLI prints a `[ui page … updated — view at /ui]`
+notice instead. `wasmdb ui render` prints the resolved `{data}` as a table.
+
+**Generator provenance** — each page records `generator`: `scaffold` (owned/overwritten
+by the generator), `agent` (touched by `manage_ui`), or `user` (edited via HTTP/CLI).
+The sweep only creates/overwrites `scaffold` pages and never clobbers `agent`/`user`
+pages. On startup, pages not on `spec_version == 2` are disabled (not deleted) and
+the scaffold regenerates v2 coverage for their tables.

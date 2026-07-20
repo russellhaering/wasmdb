@@ -12,11 +12,16 @@ import (
 // SweepResult summarizes the page reconciliation performed by Sweep. Each slice
 // holds page names, sorted, so the result is deterministic and easy to log.
 type SweepResult struct {
-	Created []string
-	Updated []string
-	Skipped []string // pages left untouched because generator != "scaffold"
-	Deleted []string // scaffold pages whose source table no longer exists
+	Created  []string
+	Updated  []string
+	Skipped  []string // pages left untouched because generator != "scaffold"
+	Deleted  []string // scaffold pages whose source table no longer exists
+	Disabled []string // pages disabled because they predate surface format v2
 }
+
+// currentSpecVersion is the surface format version Sweep expects. Pages written
+// with any other version (or none) predate the v2 rewrite and are disabled.
+const currentSpecVersion = 2
 
 // Sweep reconciles scaffold pages against the current set of user tables:
 //
@@ -52,6 +57,28 @@ func (g *Generator) Sweep(ctx context.Context) (*SweepResult, error) {
 	byName := make(map[string]*uiconfig.UIConfig, len(existing))
 	for _, cfg := range existing {
 		byName[cfg.Name] = cfg
+	}
+
+	// Pre-pass: disable any page not on surface format v2. Such pages predate the
+	// v2 rewrite and cannot be served by the current validator/render pipeline.
+	// They are disabled (enabled=false), never deleted, so their content stays
+	// recoverable; scaffold regeneration below restores v2 coverage for their
+	// tables. Already-disabled pages are left alone.
+	disableCandidates := make([]string, 0, len(byName))
+	for name := range byName {
+		disableCandidates = append(disableCandidates, name)
+	}
+	sort.Strings(disableCandidates)
+	for _, name := range disableCandidates {
+		cfg := byName[name]
+		if cfg.SpecVersion == currentSpecVersion || !cfg.Enabled {
+			continue
+		}
+		if err := g.store.SetEnabled(ctx, name, false); err != nil {
+			return nil, fmt.Errorf("uigen: disable legacy page %q: %w", name, err)
+		}
+		cfg.Enabled = false
+		result.Disabled = append(result.Disabled, name)
 	}
 
 	// Create or regenerate a page per user table.

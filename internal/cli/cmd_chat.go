@@ -91,36 +91,12 @@ func runChat(ctx *cmdContext) error {
 						}
 					}
 				}
-				// Check accumulated text for A2UI blocks and re-render (legacy path;
-				// removed in Phase 7).
-				if strings.Contains(fullText, "```a2ui") {
-					// Move cursor up to overwrite streamed text.
-					// Count lines we streamed.
-					lineCount := strings.Count(fullText, "\n") + 1
-					for i := 0; i < lineCount; i++ {
-						fmt.Fprint(ctx.stdout, "\033[A\033[2K")
-					}
-					// Render with A2UI.
-					segments := ExtractA2UIBlocks(fullText)
-					for _, seg := range segments {
-						if seg.IsA2UI {
-							if err := RenderA2UI(ctx.stdout, seg.Text); err != nil {
-								fmt.Fprint(ctx.stdout, seg.Text)
-							}
-						} else {
-							fmt.Fprint(ctx.stdout, seg.Text)
-						}
-					}
-					if !strings.HasSuffix(fullText, "\n") {
-						fmt.Fprintln(ctx.stdout)
-					}
-				}
 			}
 		}
 
 		// Ensure newline after response.
 		text := textBuf.String()
-		if text != "" && !strings.HasSuffix(text, "\n") && !strings.Contains(text, "```a2ui") {
+		if text != "" && !strings.HasSuffix(text, "\n") {
 			fmt.Fprintln(ctx.stdout)
 		}
 

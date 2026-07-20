@@ -191,6 +191,24 @@ POST   /v1/chat      # Streaming chat endpoint
 
 Requires `ANTHROPIC_API_KEY` to be set.
 
+## Web UI
+
+WasmDB auto-generates an interactive, data-aware web UI. A deterministic pure-Go
+generator emits a working CRUD "scaffold" page for every table — a live data
+table, a schema-derived create form, edit/delete/search actions — with no LLM or
+API key required, so the UI is populated as soon as you create a table. Pages are
+regenerated on startup, on schema change, and on first write. When an
+`ANTHROPIC_API_KEY` is configured, the chat agent and a background `ui-builder`
+agent can refine these pages, and chat can embed a live view of any stored page.
+
+```
+GET    /ui                              # Dashboard (page list + live render)
+GET    /ui/assets/*                     # Embedded renderer (surface.js, CSS)
+GET    /v1/ui/pages                      # List pages
+POST   /v1/ui/pages/{name}/render        # Server-side render → {surface, data}
+POST   /v1/ui/pages/{name}/actions/{a}   # Execute a declared insert/update/delete/query action
+```
+
 ## Usage Examples
 
 All examples below assume you have a session token. Pass it as a header:
@@ -342,7 +360,11 @@ internal/
                                    async builder
   embedding/                       Embedder interface, OpenAI, batching pipeline
   database/                        Table orchestration, multi-table registry
+  surface/                         UI surface format v2: typed components, actions, validation
+  uiconfig/                        UI page store, server-side render + action executor
+  uigen/                           Deterministic schema-to-page scaffold generator
   api/                             HTTP server, routes, handlers
+    webui/                         Embedded browser assets (surface.js renderer, dashboard, chat)
     graphqlapi/                    GraphQL schema and resolvers
   auth/                            Session management, login, seed user
 deploy/

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/russellhaering/wasmdb/internal/document"
 	"github.com/russellhaering/wasmdb/internal/uiconfig"
 )
 
@@ -145,6 +146,90 @@ func TestSweepIdempotentNoUpdates(t *testing.T) {
 	}
 	if !contains(res2.Skipped, "tbl-orders") || !contains(res2.Skipped, "tbl-posts") {
 		t.Fatalf("expected both pages skipped as unchanged, got skipped=%v", res2.Skipped)
+	}
+}
+
+// TestSweepDisablesLegacyPages seeds a v1 page document directly into the
+// _ui_configs table (bypassing Store.Create, which forces spec_version=2), then
+// verifies Sweep disables it (never deletes it) and still scaffolds a v2 page
+// for its table.
+func TestSweepDisablesLegacyPages(t *testing.T) {
+	ctx, reg, store, _, gen := newTestGen(t)
+	createTable(t, ctx, reg, "orders", ordersSchema())
+
+	// Seed a legacy (spec_version=1) page for the orders table with a distinct
+	// name so it does not collide with the tbl-orders scaffold page.
+	uiTbl, err := reg.GetTable(ctx, "_ui_configs")
+	if err != nil {
+		t.Fatalf("get _ui_configs table: %v", err)
+	}
+	legacy := &document.Document{Attributes: map[string]any{
+		"name":          "legacy-orders",
+		"title":         "Legacy Orders Dashboard",
+		"source_tables": []any{"orders"},
+		"surface_json":  `{"components":[{"id":"root","type":"Text","properties":{"value":"legacy"}}]}`,
+		"enabled":       true,
+		"spec_version":  1,
+		"created_by":    "seed",
+		"updated_at":    "2026-01-01T00:00:00Z",
+		// generator intentionally absent.
+	}}
+	if err := uiTbl.PutDocument(ctx, legacy); err != nil {
+		t.Fatalf("seed legacy page: %v", err)
+	}
+	// Also seed a v0 page (spec_version absent entirely) to exercise the "missing"
+	// case.
+	legacy0 := &document.Document{Attributes: map[string]any{
+		"name":         "legacy-orders-v0",
+		"title":        "Even older dashboard",
+		"surface_json": `{"components":[{"id":"root","type":"Text","properties":{"value":"v0"}}]}`,
+		"enabled":      true,
+		"created_by":   "seed",
+		"updated_at":   "2026-01-01T00:00:00Z",
+	}}
+	if err := uiTbl.PutDocument(ctx, legacy0); err != nil {
+		t.Fatalf("seed legacy v0 page: %v", err)
+	}
+	// Wait for both to be indexed so Sweep's List sees them.
+	waitGet(t, ctx, store, "legacy-orders")
+	waitGet(t, ctx, store, "legacy-orders-v0")
+
+	res, err := gen.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	if !contains(res.Disabled, "legacy-orders") || !contains(res.Disabled, "legacy-orders-v0") {
+		t.Fatalf("expected both legacy pages disabled, got disabled=%v", res.Disabled)
+	}
+	if !contains(res.Created, "tbl-orders") {
+		t.Fatalf("expected tbl-orders scaffold created, got created=%v", res.Created)
+	}
+
+	// Legacy pages still exist but are disabled (not deleted).
+	for _, name := range []string{"legacy-orders", "legacy-orders-v0"} {
+		cfg := waitGet(t, ctx, store, name)
+		if cfg == nil {
+			t.Fatalf("legacy page %q was deleted; it should only be disabled", name)
+		}
+		if cfg.Enabled {
+			t.Fatalf("legacy page %q still enabled after sweep", name)
+		}
+	}
+
+	// The scaffold page for the table is present, enabled, and v2.
+	scaffold := waitGet(t, ctx, store, "tbl-orders")
+	if scaffold.Generator != GeneratorScaffold || scaffold.SpecVersion != currentSpecVersion || !scaffold.Enabled {
+		t.Fatalf("tbl-orders unexpected: generator=%q spec=%d enabled=%v", scaffold.Generator, scaffold.SpecVersion, scaffold.Enabled)
+	}
+
+	// A second sweep is a no-op for the already-disabled legacy pages.
+	res2, err := gen.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("second Sweep: %v", err)
+	}
+	if len(res2.Disabled) != 0 {
+		t.Fatalf("expected no re-disable on second sweep, got %v", res2.Disabled)
 	}
 }
 

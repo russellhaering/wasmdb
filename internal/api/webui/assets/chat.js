@@ -1,10 +1,7 @@
-// chat.js — the chat client, ported from the previous chat_ui.go string
-// constant. Functionally unchanged except:
-//   * inline A2UI artifact rendering is removed (no renderA2UI / 'artifact' case);
-//   * on message completion, ```surface-ref {"page":"<name>"} fences are replaced
-//     with a live embed of the stored page via SurfaceUI.mount;
-//   * ```a2ui fences render as ordinary code blocks (transitional).
-// Auth is cookie-based through auth.js.
+// chat.js — the chat client. On message completion,
+// ```surface-ref {"page":"<name>"} fences are replaced with a live embed of the
+// stored page via SurfaceUI.mount; all other fenced blocks render as ordinary
+// code blocks. Auth is cookie-based through auth.js.
 (function () {
   'use strict';
 

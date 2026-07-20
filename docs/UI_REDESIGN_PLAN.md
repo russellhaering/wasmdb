@@ -1,6 +1,16 @@
 # UI Generation Redesign — Implementation Plan
 
-Status: proposed. Replaces the A2UI-based UI system with a single interactive surface pipeline.
+Status: **implemented**. Replaces the A2UI-based UI system with a single interactive surface pipeline. Delivered across seven commits:
+
+1. `Add internal/surface: v2 UI format with typed validation and actions` — component registry, per-type validation, `$data` refs, action declarations, `SpecMarkdown()`.
+2. `Rework internal/uiconfig: patch store, structured render, action executor` — patch-semantics store, `Render(ctx,cfg,params)` with no templating, action executor.
+3. `Replace /v1/ui-configs API with /v1/ui/pages` — new page CRUD + `/render` + `/actions/{action}` routes, old routes removed.
+4. `Add internal/uigen: deterministic schema-to-page scaffold generator` — pure-Go schema→page scaffold, provenance rules, sweep.
+5. `Replace string-constant UIs with embedded webui and shared surface.js` — `internal/api/webui` embed.FS, single `surface.js` renderer, dashboard + chat shells.
+6. `Wire automatic scaffold triggers: startup, schema-change, data-arrival` — startup sweep, debounced schema-change sweep, first-write hook.
+7. `Rebuild LLM integration on the v2 surface format` — `manage_ui` v2 (patch, `generator=agent`), `manage_agent action=trigger`, chat + ui-builder prompts on `SpecMarkdown()`, CLI updates.
+
+Phase 7 (this commit) removes the legacy A2UI code, adds v1-page disabling to the sweep, adds the end-to-end test, and updates the docs.
 
 ## Motivation (from the 2026-07-20 review)
 
