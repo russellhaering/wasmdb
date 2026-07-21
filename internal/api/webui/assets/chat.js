@@ -109,11 +109,70 @@
     document.querySelectorAll('.session-item').forEach(function (el) {
       el.classList.toggle('active', el.dataset.id === id);
     });
+    fetch('/v1/chat/sessions/' + encodeURIComponent(id)).then(function (resp) {
+      if (!resp.ok) return null;
+      return resp.json();
+    }).then(function (data) {
+      // Guard against a session switch that happened while the fetch was in
+      // flight: only replay if this is still the active session.
+      if (sessionId !== id) return;
+      if (data && data.items && data.items.length) {
+        replayTranscript(data.items);
+      } else {
+        showRestoredPlaceholder();
+      }
+    }).catch(function (e) {
+      console.warn('Failed to load session transcript:', e);
+      if (sessionId === id) showRestoredPlaceholder();
+    });
+    msgInput.focus();
+  }
+
+  function showRestoredPlaceholder() {
     var placeholder = document.createElement('div');
     placeholder.className = 'msg system';
     placeholder.textContent = 'session restored — type to continue the conversation';
     chat.appendChild(placeholder);
-    msgInput.focus();
+    scrollToBottom();
+  }
+
+  // replayTranscript rebuilds a stored conversation. User items become user
+  // bubbles; assistant items render through buildAssistantContent (so markdown
+  // renders and surface-ref fences re-mount live embeds); tool items become the
+  // same "done" chips the live stream shows. Assistant text and its trailing
+  // tool chips are grouped into one assistant bubble per turn, mirroring live.
+  function replayTranscript(items) {
+    var assistantDiv = null;
+    function ensureAssistant() {
+      if (!assistantDiv) {
+        assistantDiv = document.createElement('div');
+        assistantDiv.className = 'msg assistant';
+        chat.appendChild(assistantDiv);
+      }
+      return assistantDiv;
+    }
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item.role === 'user') {
+        assistantDiv = null;
+        addMessage('user', item.text || '');
+      } else if (item.role === 'assistant') {
+        var adiv = ensureAssistant();
+        if (item.text) adiv.appendChild(buildAssistantContent(item.text));
+      } else if (item.role === 'tool') {
+        ensureAssistant().appendChild(buildToolChip(item.tool));
+      }
+    }
+    scrollToBottom();
+  }
+
+  function buildToolChip(toolName) {
+    var name = toolName === 'delegate_subagent' ? 'sub-agent' : (toolName || 'tool');
+    var isSub = name === 'sub-agent';
+    var div = document.createElement('div');
+    div.className = 'tool-call' + (isSub ? ' subagent' : '');
+    div.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> done';
+    return div;
   }
 
   function deleteSession(id) {

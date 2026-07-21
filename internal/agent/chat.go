@@ -194,6 +194,13 @@ type ChatSessionInfo struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// TranscriptItem is one replayable entry in a chat session transcript.
+type TranscriptItem struct {
+	Role string `json:"role"`           // "user" | "assistant" | "tool"
+	Text string `json:"text,omitempty"` // for user/assistant: concatenated text blocks
+	Tool string `json:"tool,omitempty"` // for role "tool": tool name
+}
+
 // ChatConfig holds configuration for the chat agent.
 type ChatConfig struct {
 	AnthropicAPIKey string
@@ -417,6 +424,56 @@ func extractTitle(history []anthropic.MessageParam) string {
 		}
 	}
 	return "New Chat"
+}
+
+// GetSessionTranscript loads a stored chat session and flattens its message
+// history into ordered transcript items for replay in the web UI. It returns
+// the owning user's ID (so callers can enforce access control) alongside the
+// items. When the session does not exist, it returns an empty userID, nil
+// items, and a nil error — callers should treat that as a 404.
+func (cm *ChatManager) GetSessionTranscript(ctx context.Context, sessionID string) (string, []TranscriptItem, error) {
+	s, err := cm.loadSession(ctx, sessionID)
+	if err != nil {
+		return "", nil, err
+	}
+	if s == nil {
+		return "", nil, nil
+	}
+
+	items := make([]TranscriptItem, 0, len(s.history))
+	for _, msg := range s.history {
+		switch msg.Role {
+		case anthropic.MessageParamRoleUser:
+			// Skip tool_result blocks; surface only user-authored text.
+			if text := concatText(msg.Content); text != "" {
+				items = append(items, TranscriptItem{Role: "user", Text: text})
+			}
+		case anthropic.MessageParamRoleAssistant:
+			if text := concatText(msg.Content); text != "" {
+				items = append(items, TranscriptItem{Role: "assistant", Text: text})
+			}
+			// Emit one tool item per tool_use block, in order, so the frontend
+			// can interleave tool chips like the live stream does.
+			for _, block := range msg.Content {
+				if block.OfToolUse != nil {
+					items = append(items, TranscriptItem{Role: "tool", Tool: block.OfToolUse.Name})
+				}
+			}
+		}
+	}
+	return s.userID, items, nil
+}
+
+// concatText joins the text blocks of a message with newlines, ignoring
+// non-text blocks (tool_use, tool_result, etc.).
+func concatText(content []anthropic.ContentBlockParamUnion) string {
+	var parts []string
+	for _, block := range content {
+		if block.OfText != nil {
+			parts = append(parts, block.OfText.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // StreamMessage sends a message in a chat session and streams events back.

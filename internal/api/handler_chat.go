@@ -148,6 +148,40 @@ func (s *Server) handleListChatSessions(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, map[string]any{"sessions": sessions})
 }
 
+func (s *Server) handleGetChatSession(w http.ResponseWriter, r *http.Request) {
+	if s.chatManager == nil {
+		writeErrorMsg(w, 503, "unavailable", "chat agent not configured")
+		return
+	}
+
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		writeError(w, ErrUnauthorized)
+		return
+	}
+
+	csID := r.PathValue("id")
+	if csID == "" {
+		writeErrorMsg(w, 400, "bad_request", "session id is required")
+		return
+	}
+
+	ownerID, items, err := s.chatManager.GetSessionTranscript(r.Context(), csID)
+	if err != nil {
+		slog.Error("failed to load chat session transcript", "session", csID, "err", err)
+		writeErrorMsg(w, 500, "internal_error", "failed to load session")
+		return
+	}
+	// Mirror DeleteSession's ownership semantics: an unknown session and one
+	// owned by another user both surface as 404 (no existence disclosure).
+	if items == nil || ownerID != session.UserID {
+		writeErrorMsg(w, 404, "not_found", "session not found")
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"id": csID, "items": items})
+}
+
 func (s *Server) handleDeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	if s.chatManager == nil {
 		writeErrorMsg(w, 503, "unavailable", "chat agent not configured")

@@ -70,6 +70,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/assets/{file...}", s.handleUIAsset)
 	mux.HandleFunc("POST /v1/chat", s.handleChatStream)
 	mux.HandleFunc("GET /v1/chat/sessions", s.handleListChatSessions)
+	mux.HandleFunc("GET /v1/chat/sessions/{id}", s.handleGetChatSession)
 	mux.HandleFunc("DELETE /v1/chat/sessions/{id}", s.handleDeleteChatSession)
 
 	// Memories.

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/russellhaering/wasmdb/internal/agent"
 	"github.com/russellhaering/wasmdb/internal/auth"
 	"github.com/russellhaering/wasmdb/internal/database"
 	"github.com/russellhaering/moraine/document"
@@ -686,6 +688,115 @@ func TestSeedUser(t *testing.T) {
 	email, _ := docs[0].Attributes["email"].(string)
 	if email != "admin@test.com" {
 		t.Fatalf("expected admin@test.com, got %s", email)
+	}
+}
+
+func TestChatSessionTranscript(t *testing.T) {
+	srv, token := setupTestServer(t)
+	ctx := context.Background()
+
+	// setupTestServer has no chat manager (no API key), so attach one wired to
+	// the same registry. The transcript endpoint never calls Anthropic.
+	cm, err := agent.NewChatManager(ctx, agent.ChatConfig{
+		Registry: srv.registry,
+		FnEngine: srv.fnEngine,
+		FnStore:  srv.fnStore,
+	})
+	if err != nil {
+		t.Fatalf("NewChatManager: %v", err)
+	}
+	t.Cleanup(cm.Close)
+	srv.chatManager = cm
+
+	// Unknown session → 404.
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, token, "GET", "/v1/chat/sessions/does-not-exist", nil))
+	if w.Code != 404 {
+		t.Fatalf("unknown session: expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// No token → auth required (401).
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/v1/chat/sessions/whatever", nil))
+	if w.Code != 401 {
+		t.Fatalf("no token: expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Resolve the authenticated user's id.
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, token, "GET", "/v1/auth/me", nil))
+	var me struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &me)
+	if me.ID == "" {
+		t.Fatal("could not resolve authenticated user id")
+	}
+
+	table, err := srv.registry.GetTable(ctx, "_chat_sessions")
+	if err != nil {
+		t.Fatalf("get _chat_sessions: %v", err)
+	}
+
+	writeSession := func(id, userID string) {
+		history := []anthropic.MessageParam{
+			{Role: anthropic.MessageParamRoleUser, Content: []anthropic.ContentBlockParamUnion{
+				anthropic.NewTextBlock("hi"),
+			}},
+			{Role: anthropic.MessageParamRoleAssistant, Content: []anthropic.ContentBlockParamUnion{
+				anthropic.NewTextBlock("hello"),
+				anthropic.NewToolUseBlock("t1", map[string]any{}, "list_tables"),
+			}},
+		}
+		historyJSON, _ := json.Marshal(history)
+		if err := table.PutDocument(ctx, &document.Document{
+			ID:      id,
+			Content: string(historyJSON),
+			Attributes: map[string]any{
+				"user_id":    userID,
+				"title":      "hi",
+				"updated_at": time.Now().UTC().Format(time.RFC3339),
+			},
+		}); err != nil {
+			t.Fatalf("put session %s: %v", id, err)
+		}
+	}
+
+	// A session owned by the authenticated user → 200 with ordered items.
+	writeSession("sess-owned", me.ID)
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, token, "GET", "/v1/chat/sessions/sess-owned", nil))
+	if w.Code != 200 {
+		t.Fatalf("owned session: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID    string                 `json:"id"`
+		Items []agent.TranscriptItem `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.ID != "sess-owned" {
+		t.Fatalf("expected id sess-owned, got %q", resp.ID)
+	}
+	want := []agent.TranscriptItem{
+		{Role: "user", Text: "hi"},
+		{Role: "assistant", Text: "hello"},
+		{Role: "tool", Tool: "list_tables"},
+	}
+	if len(resp.Items) != len(want) {
+		t.Fatalf("expected %d items, got %d: %+v", len(want), len(resp.Items), resp.Items)
+	}
+	for i := range want {
+		if resp.Items[i] != want[i] {
+			t.Fatalf("item %d: expected %+v, got %+v", i, want[i], resp.Items[i])
+		}
+	}
+
+	// A session owned by a different user → 404 (no existence disclosure).
+	writeSession("sess-other", "someone-else")
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, authedRequest(t, token, "GET", "/v1/chat/sessions/sess-other", nil))
+	if w.Code != 404 {
+		t.Fatalf("other user's session: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
