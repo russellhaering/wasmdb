@@ -1,34 +1,21 @@
 # WasmDB
 
-A document-oriented database with a custom LSM-tree storage engine built on object storage (S3). Provides REST, GraphQL, and chat APIs with strong read-after-write consistency for CRUD, and eventually consistent full-text search, vector search, and attribute filtering.
+**A database built for AI agents — that grows its own UI.**
 
-## Architecture
+WasmDB is a document database that runs as a single Go binary with object storage (S3) as its only dependency. Agents are first-class users: every capability — tables, documents, search, scripting, scheduled jobs, UI pages — is exposed as tools an LLM can call, and a built-in chat agent operates the database in plain English. When data appears, WasmDB generates a working web UI for it automatically: a deterministic scaffolder emits CRUD pages from the schema and actual data within seconds, and an AI agent keeps them polished. Nobody writes frontend code; you can ask for changes in chat.
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                        HTTP API                            │
-│  REST · GraphQL · Chat · Auth · Users · Health             │
-├────────────────────────────────────────────────────────────┤
-│                    Table Registry                          │
-│             (multi-table orchestration)                    │
-├──────────┬───────────────┬────────────────────────────────┤
-│ Indexes  │   Embedding   │       LSM Storage Engine       │
-│ Bleve    │   OpenAI      │  MemTable (skip-list)          │
-│ HNSW     │   Pipeline    │  SSTable (blocks+bloom)        │
-│ Attribute│               │  WAL · Manifest · Compaction   │
-├──────────┴───────────────┼────────────────────────────────┤
-│     Local Disk Cache     │     Object Storage (S3)        │
-│    (LRU block + SST)    │                                 │
-└──────────────────────────┴────────────────────────────────┘
-```
+The storage engine is [moraine](https://github.com/russellhaering/moraine), an LSM tree over object storage extracted from this project — stateless compute, S3-grade durability, scale-to-zero.
 
-**Storage engine** -- Inspired by [SlateDB](https://slatedb.io/). Single-writer per table with epoch-based fencing via conditional puts. MemTable flushes to WAL (sequential SSTables in S3), tiered compaction merges L0 into sorted runs. Manifest uses CAS updates for consistency.
+## Highlights
 
-**Consistency model** -- CRUD operations (get, put, delete) are strongly consistent: writes flush synchronously to WAL, reads check the active MemTable first. Search indexes (full-text, vector, attribute) are eventually consistent, rebuilt asynchronously from the LSM by tailing sequence numbers.
+- **One binary, one dependency.** Go binary + an S3-compatible bucket (AWS, Tigris, MinIO, R2). No bucket configured → in-memory mode for local hacking.
+- **Documents with optional schemas.** Markdown content plus typed attributes (`string`, `int`, `float`, `bool`, arrays, `datetime`, `reference`). Schemaless tables work too.
+- **Three kinds of search.** BM25 full-text (Bleve), vector similarity (HNSW, embeddings via OpenAI), and typed attribute filtering.
+- **A self-generating, self-maintaining UI.** Every table gets a live CRUD page — data table, create form, edit/delete, search — generated deterministically from schema and data, no LLM required. With an API key, agents refine the pages and you can tweak them via chat.
+- **Agent-native.** A built-in chat agent with 23 tools, sandboxed JavaScript execution (QuickJS), stored functions, skills, persistent memories, scheduled background agents, and pluggable external MCP servers.
+- **REST, GraphQL, CLI, and chat** interfaces over the same core.
 
-## Quick Start
-
-### In-memory mode (no dependencies)
+## Quick start
 
 ```bash
 go build -o wasmdb ./cmd/wasmdb
@@ -37,252 +24,123 @@ export WASMDB_SEED_USER_PASSWORD=changeme
 ./wasmdb
 ```
 
-Without `WASMDB_S3_BUCKET` set, the server starts with an in-memory object store. Data does not persist across restarts.
+With no `WASMDB_S3_BUCKET` set, the server runs on an in-memory store (nothing persists). Add S3 credentials for durability, and `ANTHROPIC_API_KEY` to enable the chat agent.
 
-### With S3
-
-```bash
-export WASMDB_S3_BUCKET=my-bucket
-export WASMDB_S3_REGION=us-west-2
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export WASMDB_SEED_USER_EMAIL=admin@example.com
-export WASMDB_SEED_USER_PASSWORD=changeme
-./wasmdb
-```
-
-### Docker
+Then watch the UI appear:
 
 ```bash
-docker build -f deploy/Dockerfile -t wasmdb .
-docker run -p 8080:8080 \
-  -e WASMDB_SEED_USER_EMAIL=admin@example.com \
-  -e WASMDB_SEED_USER_PASSWORD=changeme \
-  wasmdb
+# Log in
+TOKEN=$(curl -s -X POST localhost:8080/v1/auth/login \
+  -d '{"email":"admin@example.com","password":"changeme"}' | jq -r .token)
+
+# Create a table with a schema
+curl -s -X POST localhost:8080/v1/tables -H "Authorization: Bearer $TOKEN" -d '{
+  "name": "issues",
+  "schema": {"fields": [
+    {"name": "title",  "type": "string", "required": true, "full_text": true},
+    {"name": "status", "type": "string", "indexed": true},
+    {"name": "open",   "type": "bool"}
+  ]}}'
 ```
 
-## Authentication
+Open `http://localhost:8080/ui` — within ~5 seconds an **Issues** page exists, with a live table, a create form, edit/delete row actions, and a search box. Nobody built it. Or open `http://localhost:8080/chat` and just say *"track my vendor invoices"* — the agent creates the table, and the UI follows.
 
-All API endpoints require authentication except `/healthz`, `/readyz`, `/v1/auth/login`, and `/auth/cli-login`.
+## The self-maintaining UI
 
-### Login
+WasmDB's UI is generated, not written, in two layers:
+
+1. **Deterministic scaffold** (`internal/uigen`) — pure Go, no LLM, no API key. For every table it emits a page from the schema (or from sampled documents when schemaless): typed columns, a create form, edit/delete actions, search when full-text fields exist. Runs at startup, on schema changes, and on first write to an empty table, so the UI exists the moment data does.
+2. **Agent polish** — with an `ANTHROPIC_API_KEY`, a built-in `ui-builder` background agent reviews the scaffolds against real data and improves them (summary metrics, select inputs from observed values, better layouts), and the chat agent edits pages on request: *"show total outstanding at the top and highlight overdue invoices."*
+
+Pages are described in a typed component format (`internal/surface`): a validated component tree (tables, forms, inputs, buttons, metrics, layout) plus declarative **actions** (`insert`/`update`/`delete`/`query`) that are the only write path from the browser — every action is validated against its declaration and the table schema server-side. Data binds structurally via `{"$data": "path"}` references resolved against a sandboxed `query_js` result at render time, so pages are always live. The LLM-facing format spec is generated from the same component registry that validates pages, so the model's instructions can never drift from what the validator accepts. Provenance tracking (`scaffold` / `agent` / `user`) ensures the auto-generator never overwrites a page a human or agent customized.
+
+A single embedded renderer (`surface.js`, no build step, no framework) drives both the dashboard at `/ui` and live page embeds inside chat.
+
+## Chat and agents
+
+`/chat` is a built-in agent (Claude, requires `ANTHROPIC_API_KEY`) with tools for everything the database can do: table and document CRUD, all three search types, sandboxed JavaScript (`execute_code` with a `db` API), stored functions, UI page management, skills, persistent memories, background agents, and tool discovery.
+
+- **Background agents** run on timer schedules with the same toolset (`manage_agent`, or `wasmdb agent create`). The built-in `ui-builder` runs daily and after new pages are scaffolded.
+- **External MCP servers** can be registered (`manage_mcp_server`, streamable-HTTP or stdio) to extend the agent with outside tools.
+- **Sub-agents** handle isolated side tasks without polluting the main context.
+
+## API
+
+Everything requires session auth except health checks and login. Authenticate with `POST /v1/auth/login` (`{"email", "password"}`) and pass the token as a `wasmdb_session` cookie or `Authorization: Bearer` header; sessions last 7 days. The first user is seeded from `WASMDB_SEED_USER_EMAIL`/`_PASSWORD` when the users table is empty.
+
+```
+POST/GET       /v1/tables                            Create / list tables
+GET/DELETE     /v1/tables/{t}                        Table info + schema / delete
+PUT            /v1/tables/{t}/schema                 Update schema
+POST/GET       /v1/tables/{t}/documents              Create / list documents
+GET/PUT/DELETE /v1/tables/{t}/documents/{id}         Document by ID
+POST           /v1/tables/{t}/documents/_bulk        Bulk create
+POST           /v1/tables/{t}/search/text            BM25 full-text search
+POST           /v1/tables/{t}/search/vector          Vector similarity search
+POST           /v1/tables/{t}/search/attributes      Attribute filters (eq, neq, gt/gte, lt/lte, contains, prefix)
+POST           /v1/graphql                           GraphQL over the same tables
+POST           /v1/chat                              Streaming chat (SSE)
+POST/GET       /v1/ui/pages                          Create / list UI pages
+GET/PATCH/DELETE /v1/ui/pages/{name}                 Page by name (PATCH = partial update)
+POST           /v1/ui/pages/{name}/render            Server-side render → {surface, data}
+POST           /v1/ui/pages/{name}/actions/{action}  Execute a declared page action
+POST/GET       /v1/users                             User management (GET/DELETE /{id})
+GET            /healthz · /readyz                    Probes (unauthenticated)
+```
+
+Example — create a document and search it:
 
 ```bash
-# Obtain a session token
-curl -s -X POST http://localhost:8080/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email": "admin@example.com", "password": "changeme"}'
-```
-
-The response sets a `wasmdb_session` cookie and returns the token in the body. Subsequent requests can authenticate with either:
-
-- **Cookie:** `wasmdb_session` (set automatically by the login response)
-- **Header:** `Authorization: Bearer <session-token>`
-
-Sessions expire after 7 days.
-
-### Seed User
-
-The first user is bootstrapped via environment variables. A user is created on startup only if the `_users` table is empty; once any user exists the seed is a no-op.
-
-```bash
-export WASMDB_SEED_USER_EMAIL=admin@example.com
-export WASMDB_SEED_USER_PASSWORD=your-password
-```
-
-### CLI Login
-
-```bash
-wasmdb login --url http://localhost:8080
-```
-
-Opens a browser for interactive login. For headless environments:
-
-```bash
-wasmdb login --url http://localhost:8080 --email admin@example.com --password changeme
-```
-
-Credentials are stored at `~/.config/wasmdb/credentials.json`.
-
-### Auth Endpoints
-
-```
-POST  /v1/auth/login     # Authenticate, returns token + sets cookie
-POST  /v1/auth/logout    # Invalidate session, clear cookie
-GET   /v1/auth/me        # Return current user info
-GET   /auth/cli-login    # HTML login page for CLI browser flow
-```
-
-## REST API
-
-All resource endpoints are prefixed with `/v1` and require authentication.
-
-### Tables
-
-```
-POST   /v1/tables              # Create a table
-GET    /v1/tables              # List tables
-GET    /v1/tables/{table}      # Get table info
-DELETE /v1/tables/{table}      # Delete a table
-```
-
-### Schema
-
-Each table has an optional schema defining typed attribute fields.
-
-```
-GET    /v1/tables/{table}/schema    # Get schema
-PUT    /v1/tables/{table}/schema    # Update schema
-```
-
-Field types: `string`, `int`, `float`, `bool`, `[]string`, `[]int`, `[]float`, `datetime`, `reference`.
-
-### Documents
-
-```
-POST   /v1/tables/{table}/documents          # Create document
-GET    /v1/tables/{table}/documents          # List documents (paginated)
-GET    /v1/tables/{table}/documents/{id}     # Get document
-PUT    /v1/tables/{table}/documents/{id}     # Update document
-DELETE /v1/tables/{table}/documents/{id}     # Delete document
-POST   /v1/tables/{table}/documents/_bulk    # Bulk create
-```
-
-Documents have optional Markdown content and typed key/value attributes.
-
-### Search
-
-```
-POST   /v1/tables/{table}/search/text        # Full-text search (BM25)
-POST   /v1/tables/{table}/search/vector      # Vector similarity search
-POST   /v1/tables/{table}/search/attributes  # Attribute filtering
-```
-
-### Users
-
-```
-POST   /v1/users          # Create user
-GET    /v1/users           # List users
-GET    /v1/users/{id}      # Get user
-DELETE /v1/users/{id}      # Delete user
-```
-
-### Health
-
-```
-GET    /healthz    # Liveness probe (no auth required)
-GET    /readyz     # Readiness probe (no auth required)
-```
-
-## GraphQL API
-
-```
-POST   /v1/graphql    # GraphQL endpoint
-```
-
-## Chat
-
-WasmDB includes a built-in chat interface powered by Claude that can query and interact with your data.
-
-```
-GET    /chat         # Chat web UI (no auth required)
-POST   /v1/chat      # Streaming chat endpoint
-```
-
-Requires `ANTHROPIC_API_KEY` to be set.
-
-## Web UI
-
-WasmDB auto-generates an interactive, data-aware web UI. A deterministic pure-Go
-generator emits a working CRUD "scaffold" page for every table — a live data
-table, a schema-derived create form, edit/delete/search actions — with no LLM or
-API key required, so the UI is populated as soon as you create a table. Pages are
-regenerated on startup, on schema change, and on first write. When an
-`ANTHROPIC_API_KEY` is configured, the chat agent and a background `ui-builder`
-agent can refine these pages, and chat can embed a live view of any stored page.
-
-```
-GET    /ui                              # Dashboard (page list + live render)
-GET    /ui/assets/*                     # Embedded renderer (surface.js, CSS)
-GET    /v1/ui/pages                      # List pages
-POST   /v1/ui/pages/{name}/render        # Server-side render → {surface, data}
-POST   /v1/ui/pages/{name}/actions/{a}   # Execute a declared insert/update/delete/query action
-```
-
-## Usage Examples
-
-All examples below assume you have a session token. Pass it as a header:
-
-```bash
-TOKEN="your-session-token"
-AUTH="-H 'Authorization: Bearer $TOKEN'"
-```
-
-Or use the cookie set by login (e.g. with `curl -b cookies.txt`).
-
-Create a table:
-
-```bash
-curl -s -X POST http://localhost:8080/v1/tables \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name": "issues"}'
-```
-
-Set a schema:
-
-```bash
-curl -s -X PUT http://localhost:8080/v1/tables/issues/schema \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "fields": [
-      {"name": "title", "type": "string", "required": true, "full_text": true},
-      {"name": "status", "type": "string", "indexed": true},
-      {"name": "labels", "type": "[]string", "indexed": true}
-    ]
-  }'
-```
-
-Create a document:
-
-```bash
-curl -s -X POST http://localhost:8080/v1/tables/issues/documents \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{
+curl -s -X POST localhost:8080/v1/tables/issues/documents \
+  -H "Authorization: Bearer $TOKEN" -d '{
     "content": "Login page returns 500 when password field is empty.",
-    "attributes": {
-      "title": "Login crash on empty password",
-      "status": "open",
-      "labels": ["bug", "auth"]
-    }
+    "attributes": {"title": "Login crash on empty password", "status": "open", "open": true}
   }'
+
+curl -s -X POST localhost:8080/v1/tables/issues/search/text \
+  -H "Authorization: Bearer $TOKEN" -d '{"query": "login crash", "limit": 10}'
 ```
 
-Full-text search:
+## CLI
 
 ```bash
-curl -s -X POST http://localhost:8080/v1/tables/issues/search/text \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "login crash", "limit": 10}'
+go build -o wasmdb-cli ./cmd/wasmdb-cli
+wasmdb-cli login --url http://localhost:8080          # browser flow; add --email/--password for headless
+wasmdb-cli db list                                    # tables
+wasmdb-cli doc create issues --attr title="Fix login" --attr status=open
+wasmdb-cli search text issues "login"
+wasmdb-cli exec --code 'function handler() { return db.tables() }'
+wasmdb-cli ui render tbl-issues                       # server-render a page, print the data
+wasmdb-cli agent trigger ui-builder                   # run the UI polish agent now
+wasmdb-cli chat                                       # interactive chat in the terminal
 ```
 
-Attribute search:
+Covers tables, documents, search, stored functions, ephemeral JS, UI pages, agents, MCP servers, users, and raw API access (`wasmdb-cli api /v1/tables`). Add `--json` to any command. Config lives at `~/.config/wasmdb/config.json` (`wasmdb-cli config set url https://...`).
 
-```bash
-curl -s -X POST http://localhost:8080/v1/tables/issues/search/attributes \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "filters": [
-      {"field": "status", "op": "eq", "value": "open"},
-      {"field": "labels", "op": "contains", "value": "bug"}
-    ],
-    "limit": 10
-  }'
+## Architecture
+
 ```
+┌─────────────────────────────────────────────────────────────┐
+│                           HTTP API                          │
+│    REST · GraphQL · Chat (SSE) · UI pages · Auth · Health   │
+├──────────────┬───────────────────────────┬──────────────────┤
+│  Chat agent  │       Table registry      │   UI pipeline    │
+│  bg agents   │  schemas · system tables  │ scaffold, render │
+│ skills, MCP  │                           │ actions, assets  │
+├──────────────┴──────┬────────────────────┴──────────────────┤
+│   Derived indexes   │ QuickJS sandbox (query_js, functions) │
+│ Bleve · HNSW · attr │                                       │
+├─────────────────────┴───────────────────────────────────────┤
+│              moraine — LSM over object storage              │
+│     MemTable · WAL · SSTables · compaction · disk cache     │
+├─────────────────────────────────────────────────────────────┤
+│             S3 / Tigris / MinIO / R2 / in-memory            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Storage** — [moraine](https://github.com/russellhaering/moraine), inspired by [SlateDB](https://slatedb.io/): single writer per table with epoch-based fencing via conditional puts, MemTable flushing to WAL/SSTables in object storage, tiered compaction, CAS-updated manifest, local LRU disk cache for reads.
+
+**Consistency** — document CRUD is strongly consistent (synchronous WAL flush, reads consult the MemTable). Derived indexes — full-text, vector, attribute — are rebuilt asynchronously by tailing LSM sequence numbers and are eventually consistent.
 
 ## Configuration
 
@@ -291,84 +149,73 @@ All configuration is via environment variables.
 | Variable | Default | Description |
 |---|---|---|
 | `WASMDB_LISTEN_ADDR` | `:8080` | HTTP listen address |
-| `WASMDB_S3_BUCKET` | *(empty)* | S3 bucket name; if empty, uses in-memory store |
-| `WASMDB_S3_REGION` | `us-east-1` | AWS region |
-| `WASMDB_S3_ENDPOINT` | *(empty)* | Custom S3 endpoint (MinIO, Tigris, LocalStack, etc.) |
-| `WASMDB_S3_PREFIX` | `wasmdb` | Key prefix in the S3 bucket |
+| `WASMDB_S3_BUCKET` | *(empty)* | Bucket name; empty → in-memory store |
+| `WASMDB_S3_REGION` | `us-east-1` | Region |
+| `WASMDB_S3_ENDPOINT` | *(empty)* | Custom S3 endpoint (Tigris, MinIO, R2, LocalStack) |
+| `WASMDB_S3_PREFIX` | `wasmdb` | Key prefix within the bucket |
 | `WASMDB_CACHE_DIR` | `/tmp/wasmdb-cache` | Local disk cache directory |
-| `WASMDB_CACHE_MAX_SIZE` | `1073741824` (1 GB) | Max disk cache size in bytes |
+| `WASMDB_CACHE_MAX_SIZE` | `1073741824` (1 GB) | Max disk cache bytes |
 | `WASMDB_MEMTABLE_MAX_SIZE` | `67108864` (64 MB) | MemTable size before flush |
-| `WASMDB_L0_COMPACT_THRESHOLD` | `4` | L0 SSTables before compaction triggers |
+| `WASMDB_L0_COMPACT_THRESHOLD` | `4` | L0 SSTables before compaction |
 | `WASMDB_WAL_FLUSH_INTERVAL` | `1s` | Periodic WAL flush interval |
-| `OPENAI_API_KEY` | *(empty)* | Enables vector embeddings via OpenAI |
-| `ANTHROPIC_API_KEY` | *(empty)* | Enables chat agent (`/chat`, `/v1/chat`) |
-| `WASMDB_CHAT_MODEL` | *(empty)* | Optional main chat model override (defaults to Sonnet 4.5) |
-| `WASMDB_SUBAGENT_MODEL` | *(empty)* | Optional default model for `delegate_subagent` tool |
-| `WASMDB_SEED_USER_EMAIL` | *(empty)* | Bootstrap user email (first run only) |
-| `WASMDB_SEED_USER_PASSWORD` | *(empty)* | Bootstrap user password (first run only) |
+| `ANTHROPIC_API_KEY` | *(empty)* | Enables the chat agent and background agents |
+| `OPENAI_API_KEY` | *(empty)* | Enables vector embeddings |
+| `WASMDB_CHAT_MODEL` | *(empty)* | Chat model override (default: Claude Sonnet 4.5) |
+| `WASMDB_SUBAGENT_MODEL` | *(empty)* | Model for delegated sub-agents |
+| `WASMDB_SEED_USER_EMAIL` / `_PASSWORD` | *(empty)* | Bootstrap user (first run only) |
 
 ## Deployment
 
-### Fly.io
-
-WasmDB is configured for deployment on [Fly.io](https://fly.io) with [Tigris](https://www.tigrisdata.com/) object storage. Deployment config is in `fly.toml`.
+Configured for [Fly.io](https://fly.io) with [Tigris](https://www.tigrisdata.com/) object storage (`fly.toml`):
 
 ```bash
 fly deploy
+fly secrets set WASMDB_SEED_USER_EMAIL=admin@example.com \
+                WASMDB_SEED_USER_PASSWORD=your-password \
+                ANTHROPIC_API_KEY=sk-...
 ```
 
-Set secrets:
-
-```bash
-fly secrets set WASMDB_SEED_USER_EMAIL=admin@example.com
-fly secrets set WASMDB_SEED_USER_PASSWORD=your-password
-fly secrets set ANTHROPIC_API_KEY=sk-...
-```
-
-### Docker
+Or Docker:
 
 ```bash
 docker build -f deploy/Dockerfile -t wasmdb .
 docker run -p 8080:8080 \
-  -e WASMDB_S3_BUCKET=my-bucket \
-  -e AWS_ACCESS_KEY_ID=... \
-  -e AWS_SECRET_ACCESS_KEY=... \
-  -e WASMDB_SEED_USER_EMAIL=admin@example.com \
-  -e WASMDB_SEED_USER_PASSWORD=changeme \
+  -e WASMDB_S3_BUCKET=my-bucket -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... \
+  -e WASMDB_SEED_USER_EMAIL=admin@example.com -e WASMDB_SEED_USER_PASSWORD=changeme \
   wasmdb
 ```
+
+## Project structure
+
+```
+cmd/wasmdb                 Server entry point        cmd/wasmdb-cli   CLI
+internal/
+  api/                     HTTP server, routes, handlers
+    webui/                 Embedded frontend (surface.js renderer, dashboard, chat)
+    graphqlapi/            GraphQL schema and resolvers
+  agent/                   Chat manager, tool server (23 tools), system prompt
+  agents/                  Background agent scheduler, builtin ui-builder
+  surface/                 UI format: typed components, actions, validation, generated LLM spec
+  uiconfig/                UI page store, server-side render, action executor
+  uigen/                   Deterministic schema→page scaffold generator + triggers
+  functions/               QuickJS sandbox, stored functions, JS db API
+  database/                Table registry, system tables (on moraine)
+  auth/ · config/          Sessions and login · env configuration
+  skills/ · memory/        Agent skills · persistent memories
+  mcpservers/ · autobot/   External MCP registry · agent runtime
+deploy/Dockerfile          Multi-stage build
+```
+
+Storage internals (LSM, SSTables, WAL, compaction, object stores, document serialization, index plumbing) live in [moraine](https://github.com/russellhaering/moraine).
+
+## Status
+
+A nights-and-weekends project, built almost entirely by AI agents — including the review and rebuild of its own UI system. It has a real test suite (~11k lines across wasmdb and moraine) and runs in production for its author, but it is young: expect sharp edges, and don't bet your company on it yet. Issues and ideas welcome.
 
 ## Testing
 
 ```bash
 go test ./...
-```
-
-## Project Structure
-
-```
-cmd/wasmdb/main.go                 Entry point
-internal/
-  config/                          Environment-based configuration
-  document/                        Document type, schema, binary serialization
-  storage/
-    objstore/                      ObjectStore interface, S3 + memory backends
-    cache/                         LRU block cache, disk SSTable cache
-    lsm/                           LSM engine: memtable, sstable, wal, manifest,
-                                   writer, reader, compaction, db
-  index/                           Bleve FTS, HNSW vector, attribute filtering,
-                                   async builder
-  embedding/                       Embedder interface, OpenAI, batching pipeline
-  database/                        Table orchestration, multi-table registry
-  surface/                         UI surface format v2: typed components, actions, validation
-  uiconfig/                        UI page store, server-side render + action executor
-  uigen/                           Deterministic schema-to-page scaffold generator
-  api/                             HTTP server, routes, handlers
-    webui/                         Embedded browser assets (surface.js renderer, dashboard, chat)
-    graphqlapi/                    GraphQL schema and resolvers
-  auth/                            Session management, login, seed user
-deploy/
-  Dockerfile                       Multi-stage build
 ```
 
 ## License
