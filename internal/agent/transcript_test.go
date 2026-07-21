@@ -82,3 +82,17 @@ func TestGetSessionTranscript(t *testing.T) {
 		t.Fatalf("unknown session: expected empty owner and nil items, got %q %+v", owner2, items2)
 	}
 }
+
+func TestStripUserPreamble(t *testing.T) {
+	cases := map[string]string{
+		"Authenticated user_id: 01ABC\n\nUser request:\nhello":                        "hello",
+		"Authenticated user_id: 01ABC\n\nMemories:\n- x\nUser request:\nmulti\nline": "multi\nline",
+		"plain message with no preamble":                                             "plain message with no preamble",
+		"User request:\nnot actually prefixed":                                       "User request:\nnot actually prefixed",
+	}
+	for in, want := range cases {
+		if got := stripUserPreamble(in); got != want {
+			t.Errorf("stripUserPreamble(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

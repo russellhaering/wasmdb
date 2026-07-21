@@ -446,7 +446,7 @@ func (cm *ChatManager) GetSessionTranscript(ctx context.Context, sessionID strin
 		case anthropic.MessageParamRoleUser:
 			// Skip tool_result blocks; surface only user-authored text.
 			if text := concatText(msg.Content); text != "" {
-				items = append(items, TranscriptItem{Role: "user", Text: text})
+				items = append(items, TranscriptItem{Role: "user", Text: stripUserPreamble(text)})
 			}
 		case anthropic.MessageParamRoleAssistant:
 			if text := concatText(msg.Content); text != "" {
@@ -466,6 +466,19 @@ func (cm *ChatManager) GetSessionTranscript(ctx context.Context, sessionID strin
 
 // concatText joins the text blocks of a message with newlines, ignoring
 // non-text blocks (tool_use, tool_result, etc.).
+// stripUserPreamble removes the server-injected auth/context preamble from a
+// stored user turn (see StreamMessage's prompt construction) so transcripts
+// show only what the user actually typed.
+func stripUserPreamble(text string) string {
+	if !strings.HasPrefix(text, "Authenticated user_id: ") {
+		return text
+	}
+	if _, rest, ok := strings.Cut(text, "\nUser request:\n"); ok {
+		return rest
+	}
+	return text
+}
+
 func concatText(content []anthropic.ContentBlockParamUnion) string {
 	var parts []string
 	for _, block := range content {
